@@ -747,7 +747,7 @@ $rest_url   = rest_url('rvce/v1');
                                 <span style="color:#f8fafc; background:rgba(56,189,248,0.18); border:1px solid rgba(56,189,248,0.4); padding:1px 6px; border-radius:4px; font-weight:600;">${triggerPage}</span>
                             </div>
                             <div style="color:var(--text-dim); font-size:11px; margin-top:3px;">💻 ${s.device?.type || 'Desktop'} · ${geoStr}</div>
-                        </td>`
+                        </td>
                         <td>
                             <div class="tag tag-indigo" style="margin-bottom:4px;">💬 ${turns} turn${turns === 1 ? '' : 's'}</div>
                             <div style="max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#fff; font-weight:600;" title="${lastQ}">

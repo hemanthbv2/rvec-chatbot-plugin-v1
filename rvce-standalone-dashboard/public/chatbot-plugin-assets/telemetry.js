@@ -136,10 +136,19 @@
 
     // Global Helper to explicitly track Chatbot Openings with exact page context
     window.rvceTrackBotOpen = function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const utm = {};
+        ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'].forEach(k => {
+            const v = urlParams.get(k);
+            if (v) utm[k] = v;
+        });
+
         trackEvent('bot_open', {
             pagePath: window.location.pathname || '/',
             url: window.location.href,
-            title: document.title
+            title: document.title,
+            referrer: document.referrer || 'direct',
+            utm: Object.keys(utm).length ? utm : undefined
         }, true);
     };
 
@@ -175,11 +184,79 @@
     }, { passive: true });
 
     // Dual-Write Transmission with deduplication and reliable fallback
+    
+    // -------------------------------------------------------------------------
+    // Friction Detection Engine: Rage Clicks, Dead Clicks & Typing Hesitation
+    // -------------------------------------------------------------------------
+    let clickHistory = [];
+    document.addEventListener('click', (e) => {
+        const root = document.getElementById('rvce-chatbot-root') || document.querySelector('.app-container');
+        if (!root || !root.contains(e.target)) return;
+
+        const now = Date.now();
+        clickHistory.push({ x: e.clientX, y: e.clientY, time: now, target: e.target });
+        clickHistory = clickHistory.filter(c => now - c.time < 800);
+
+        // 1. Rage Click Detection (3+ rapid clicks in < 800ms)
+        if (clickHistory.length >= 3) {
+            const targetText = (e.target.innerText || e.target.textContent || '').substring(0, 35).trim();
+            const tag = e.target.tagName.toLowerCase();
+            trackEvent('rage_click', {
+                element: tag,
+                elementText: targetText,
+                clicksCount: clickHistory.length,
+                url: window.location.href
+            }, true);
+            clickHistory = [];
+            return;
+        }
+
+        // 2. Dead Click Detection (clicks on static bot message text expecting links/action)
+        const isInteractive = e.target.closest('button, a, input, select, textarea, [role="button"], .suggestion-chip, .emoji-btn, .mic-btn');
+        if (!isInteractive && (e.target.classList.contains('chat-bubble') || e.target.closest('.chat-bubble'))) {
+            const staticText = (e.target.innerText || e.target.textContent || '').substring(0, 45).trim();
+            trackEvent('dead_click', {
+                element: e.target.tagName.toLowerCase(),
+                elementText: staticText,
+                url: window.location.href
+            });
+        }
+    }, { passive: true });
+
+    // 3. Typing Hesitation Detection (pause > 3.5s with text entered in #userInput)
+    let typingTimer = null;
+    let typingStart = 0;
+    document.addEventListener('input', (e) => {
+        if (e.target && (e.target.id === 'userInput' || e.target.classList.contains('chat-input'))) {
+            if (!typingStart) typingStart = Date.now();
+            clearTimeout(typingTimer);
+            typingTimer = setTimeout(() => {
+                if (e.target.value && e.target.value.trim().length >= 3) {
+                    trackEvent('typing_hesitation', {
+                        draftLength: e.target.value.trim().length,
+                        dwellMs: Date.now() - typingStart,
+                        url: window.location.href
+                    });
+                }
+                typingStart = 0;
+            }, 3500);
+        }
+    }, { passive: true });
+
     async function sendBatch(batch) {
         if (!batch || batch.length === 0) return;
         touchSession();
         const { wpRestUrl, vercelUrl } = getEndpoints();
         const subsite = getSubsite();
+
+        const botOpenItem = batch.find(b => b.eventType === 'bot_open' || b.eventType === 'chat_open');
+        const triggerPage = botOpenItem?.data?.pagePath || (window.location.pathname || '/');
+        const urlParams = new URLSearchParams(window.location.search);
+        const utm = {};
+        ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'].forEach(k => {
+            const v = urlParams.get(k);
+            if (v) utm[k] = v;
+        });
 
         const payload = JSON.stringify({
             institute_id: 'rvce',
@@ -189,6 +266,18 @@
             api_key: 'rvce_key_12345',
             apiKey: 'rvce_key_12345',
             sessionId: SESSION_ID,
+            landingPage: window.location.pathname || '/',
+            entryPage: window.location.pathname || '/',
+            botOpenedOnPage: triggerPage,
+            referrer: document.referrer || 'direct',
+            utm: Object.keys(utm).length ? utm : undefined,
+            metaData: {
+                landingPage: window.location.pathname || '/',
+                entryPage: window.location.pathname || '/',
+                botOpenedOnPage: triggerPage,
+                referrer: document.referrer || 'direct',
+                utm: Object.keys(utm).length ? utm : undefined
+            },
             events: batch
         });
 

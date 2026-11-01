@@ -490,6 +490,8 @@
 
             return [];
         }
+
+        function renderSignals(signals = {}) {
             if (signalChart) signalChart.destroy();
             const ctx = document.getElementById('signalChart').getContext('2d');
             signalChart = new Chart(ctx, {

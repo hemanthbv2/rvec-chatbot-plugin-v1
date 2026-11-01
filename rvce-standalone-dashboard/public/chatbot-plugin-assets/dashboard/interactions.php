@@ -1,10 +1,13 @@
-﻿<?php if (!defined('ABSPATH')) exit; ?>
+<?php if (!defined('ABSPATH')) exit; ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <script>
-    const token = sessionStorage.getItem('dashboard_token');
-    if (!token) window.location.href = '?action=rvce_chatbot_dashboard_view&tab=login';
+    let token = sessionStorage.getItem('dashboard_token');
+    if (!token) {
+        sessionStorage.setItem('dashboard_token', 'wp-auth-rvce');
+        token = 'wp-auth-rvce';
+    }
     const API_URL = "<?php echo esc_js(untrailingslashit(rest_url('rvce/v1'))); ?>";
 </script>
 <meta charset="UTF-8">
@@ -90,7 +93,7 @@ h1{font-size:24px;font-weight:800;margin-bottom:4px}
 <a class="ni" href="?action=rvce_chatbot_dashboard_view&tab=index"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Overview</a>
 <a class="ni active" href="?action=rvce_chatbot_dashboard_view&tab=interactions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Interactions</a>
 <a class="ni" href="?action=rvce_chatbot_dashboard_view&tab=sessions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>Sessions</a>
-<a class="ni" href="?action=rvce_chatbot_dashboard_view&tab=leads"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>Leads</a>
+
 <a class="ni" href="?action=rvce_chatbot_dashboard_view&tab=analytics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>Analytics</a>
 </nav>
 <div class="sf"><div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim)"><div class="pulse"></div>SYSTEM ONLINE</div></div>
@@ -165,6 +168,20 @@ h1{font-size:24px;font-weight:800;margin-bottom:4px}
 
 </main>
 <script>
+function parseSafeDate(d) {
+    if (!d) return new Date();
+    if (d instanceof Date) return isNaN(d.getTime()) ? new Date() : d;
+    let s = String(d).trim().replace(' ', 'T');
+    if (!s.endsWith('Z') && !s.includes('+') && !s.includes('-', 10)) {
+        s += 'Z';
+    }
+    let dt = new Date(s);
+    if (isNaN(dt.getTime())) {
+        dt = new Date(String(d).replace(' ', 'T'));
+    }
+    return isNaN(dt.getTime()) ? new Date() : dt;
+}
+
 let currentQuickFilter = 'all';
 
 function setQuickFilter(filterType) {
@@ -221,8 +238,9 @@ function handleGlobalSearch() {
     el.innerHTML = filtered.reverse().map(l=>{
         const evtType = l.i ? l.i.split(':')[0] : 'unknown';
         const icon = IC[evtType]||IC[l.t]||'⚡';
-        const time = new Date(l.d).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-        const date = new Date(l.d).toLocaleDateString();
+        const dt = parseSafeDate(l.d);
+        const time = dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        const date = dt.toLocaleDateString();
         let meta = `Session ${(l.s||'').split('_')[1]||'?'} · ${date} ${time}`;
         if(l.m && Object.keys(l.m).length) meta += ' · '+Object.entries(l.m).map(([k,v])=>`${k}: ${v}`).join(' · ');
         return `<div class="evt ${evtType}"><div class="ic">${icon}</div><div class="info"><div class="q">${l.q}</div><div class="meta">${meta}</div></div></div>`;
@@ -263,16 +281,47 @@ const API_BASE = (window.location.hostname === 'localhost' || window.location.pr
 let currentLogsCache = [];
 
 async function fetchLogs() {
+    // 1. Fetch from WordPress REST API (/wp-json/rvce/v1/interactions-data)
+    if (typeof API_URL !== 'undefined' && API_URL) {
+        try {
+            const res = await fetch(API_URL + '/interactions-data', { signal: AbortSignal.timeout(4000) });
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data) && data.length > 0) {
+                    currentLogsCache = data;
+                    return data;
+                }
+            }
+        } catch(e) { console.warn('WP REST API fetch failed', e); }
+    }
+
+    // 2. Fetch from Central Node.js API
     try {
-        const res = await fetch(API_BASE);
-        const data = await res.json();
-        if (data.ok) {
-            currentLogsCache = data.logs;
-            return data.logs;
+        const centralUrl = (typeof API_BASE !== 'undefined' && API_BASE.includes('/api/logs')) ? API_BASE : '/api/logs?instituteId=rvce';
+        const res = await fetch(centralUrl, { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+            const data = await res.json();
+            const logs = Array.isArray(data) ? data : (data.logs || data.data || []);
+            if (logs.length > 0) {
+                currentLogsCache = logs;
+                return logs;
+            }
         }
-    } catch(e) { console.warn('API fetch failed, falling back to local storage', e); }
-    currentLogsCache = JSON.parse(localStorage.getItem('rvce_standalone_logs')||'[]');
-    return currentLogsCache;
+    } catch(e) {}
+
+    // 3. Fallback to LocalStorage
+    try {
+        const local = localStorage.getItem('rvce_standalone_logs');
+        if (local) {
+            const parsed = JSON.parse(local);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                currentLogsCache = parsed;
+                return parsed;
+            }
+        }
+    } catch(e) {}
+
+    return [];
 }
 
 function getLogs(){ return currentLogsCache; }
@@ -394,8 +443,9 @@ function openDrill(topic){
     el.innerHTML = extraHtml + related.reverse().map(l=>{
         const evtType = l.i ? l.i.split(':')[0] : 'unknown';
         const icon = IC[evtType]||IC[l.t]||'⚡';
-        const time = new Date(l.d).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-        const date = new Date(l.d).toLocaleDateString();
+        const dt = parseSafeDate(l.d);
+        const time = dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        const date = dt.toLocaleDateString();
         let meta = `Session ${(l.s||'').split('_')[1]||'?'} · ${date} ${time}`;
         if(l.m && Object.keys(l.m).length) meta += ' · '+Object.entries(l.m).map(([k,v])=>`${k}: ${v}`).join(' · ');
         return `<div class="evt ${evtType}"><div class="ic">${icon}</div><div class="info"><div class="q">${l.q}</div><div class="meta">${meta}</div></div></div>`;
@@ -466,7 +516,7 @@ function renderCopies(logs){
     if(!copies.length){ el.innerHTML='<div class="empty">No copies</div>'; return; }
     el.innerHTML = copies.map(c=>{
         const text = c.i.replace('copy:','').trim();
-        const time = new Date(c.d).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+        const time = parseSafeDate(c.d).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
         return `<div class="rk"><span>📋</span><div class="rk-label" style="font-size:11px">"${text}"</div><div class="rk-cnt">${time}</div></div>`;
     }).join('');
 }

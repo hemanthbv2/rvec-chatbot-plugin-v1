@@ -2,19 +2,41 @@
 function startRVCEChatbot() {
 'use strict';
 
+// 1. Immediately exit if Elementor or page builder editor is active
+if (
+    typeof window !== 'undefined' && (
+        window.location.search.includes('elementor-preview') ||
+        window.location.search.includes('action=elementor') ||
+        window.location.search.includes('elementor_library') ||
+        window.location.search.includes('fl_builder') ||
+        window.location.search.includes('et_fb') ||
+        window.location.search.includes('ct_builder') ||
+        window.location.search.includes('bricks') ||
+        (window.parent !== window && (window.location.search.includes('preview') || document.body?.classList.contains('elementor-editor-active')))
+    )
+) {
+    return;
+}
+
+// 2. Only run if chatbot root or launcher exists in DOM
+if (!document.getElementById('rvce-chatbot-root') && !document.getElementById('chatFab')) {
+    return;
+}
+
 let tone = 'pro';
 let chatOpen = false;
 
 /* =============== NLP TOKENIZER & PROCESSOR =============== */
 const STOP_WORDS = new Set([
-    // Only remove words that are 3+ letters and are NEVER department codes or keywords
-    "what", "the", "can", "you", "tell", "about",
-    "show", "give", "want", "know", "how", "does", "are",
-    "for", "with", "but", "because", "curious", "whats", "info", "details", "pls", "plz", "urgent",
-    "please", "hello", "hey", "sir", "madam", "could", "would", "should"
-    // INTENTIONALLY EXCLUDED (are department codes or contextually meaningful):
-    // "is" (ISE), "me" (Mechanical), "or" (used in phrases), "at", "in", "on", "an",
-    // "a", "i", "do", "and", "so", "of", "to", "hi"
+    // Basic grammar, prepositions, auxiliary verbs, and pronouns (ignoring 'is', 'me', 'the', etc.)
+    "the", "is", "are", "was", "were", "be", "been", "being",
+    "a", "an", "of", "to", "in", "for", "with", "on", "at", "by", "from",
+    "up", "down", "into", "over", "after", "before", "between", "under", "and", "or", "but",
+    "who", "whom", "whose", "which", "what", "whats", "where", "when", "why", "how",
+    "tell", "give", "show", "want", "know", "need", "me", "you", "he", "she",
+    "it", "they", "them", "my", "your", "his", "her", "i", "we", "do", "does", "did",
+    "have", "has", "had", "having", "can", "could", "would", "should", "please", "pls",
+    "plz", "sir", "madam", "curious", "urgent", "info", "details", "there"
 ]);
 
 function tokenize(text) {
@@ -1491,7 +1513,7 @@ const QA = [
     {k:['mess','mess food','hostel food','mess menu','breakfast','lunch','dinner','food in hostel','mess charges','mess committee'],id:'mess',p:1},
     {k:['transport','how to reach','bmtc','bus route','kengeri metro','commute to rvce','distance from','reach rvce','reach the college','how to get there','travel to rvce','cab to rvce','auto to rvce','ola to rvce','uber to rvce','metro station','nearest metro'],id:'transport',p:1},
     {k:['wifi','internet','wi fi','connectivity','broadband','net access','wifi password','net speed','slow internet'],id:'wifi',p:1},
-    {k:['canteen','food','mess food','eat','dining','cafeteria','food court','what to eat','lunch','breakfast','snacks','tiffin','grub','khana','mess menu','food quality','dabba','maggi point'],id:'food',p:1},
+    {k:['canteen','food','mess food','eat','dining','cafeteria','food court','what to eat','lunch','breakfast','snacks','tiffin','grub','khana','mess menu','food quality','dabba','maggi point'],id:'food',p:0.8},
     {k:['exam','exams','examination','examinations','semester exam','end semester','internal','assessment','cie','end sem','mid sem','exam pattern','question paper','question papers','endsem','midsem','internals','ia marks','see exam','cie marks','qp','prev papers','previous papers'],id:'exam',p:1},
     {k:['lateral','lateral entry','diploma holder','dcet','lateral admission'],id:'lateral',p:1},
     {k:['nri','international student','foreign student','overseas','ciwg','pio','oci','foreign quota','nri quota','nri admission','abroad student'],id:'nri',p:1},
@@ -1558,7 +1580,7 @@ const QA = [
     {k:['seat','seats','total seats','intake','intake capacity','seat count','total intake'],id:'intake',p:0.5},
     {k:['student count','student strength','total students','how many students','current students','how many students in rvce','student population'],id:'student_count',p:1},
     {k:['library','central library','books','reading room','e library','digital library','lib','library timing','study room'],id:'library',p:0.3},
-    {k:['sports','cricket','football','basketball','volleyball','athletics','gym','gymnatorium','sports complex','games','badminton','table tennis','tt','fitness','workout','sports ground','playground'],id:'sports',p:1},
+    {k:['sports','cricket','football','basketball','volleyball','athletics','gym','gymnatorium','sports complex','games','badminton','table tennis','tt','fitness','workout','sports ground','playground'],id:'sports',p:0.8},
     {k:['autonomous','autonomy','own syllabus','own exam','autonomous status','is rvce autonomous'],id:'autonomous',p:1},
     {k:['stat','stats','statistic','statistics','figure','figures','data'],id:'stats_disambiguation',p:0.4},
     {k:['number','numbers','num','contact number','phone number','official number','calling','mobile'],id:'numbers_info',p:2.5},
@@ -1566,7 +1588,7 @@ const QA = [
     // Department-specific (with short codes + college slang)
     {k:['computer science','cse','cs','cs department','computer science engineering','cse department','comps','comp sci','cs branch','cs dept'],id:'dept_cs',p:1},
     {k:['artificial intelligence','aiml','ai ml','machine learning','ai department','ai branch','ml branch','ai and ml','cse aiml','cse ai ml','cse ai','cse artificial intelligence'],id:'dept_aiml',p:0.5},
-    {k:['electronics and communication','ece','ec','ec department','ece department','entc','e and c','ec branch'],id:'dept_ec',p:1},
+    {k:['electronics and communication','electronics communication','electronics and communication engineering','electronics communication engineering','ece','ec','ec department','ece department','entc','e and c','ec branch'],id:'dept_ec',p:1},
     {k:['mechanical engineering','me department','mech','mech department','mechanical','mech engg','mech branch','mechies'],id:'dept_me',p:1},
     {k:['civil engineering','cv department','cv','civil department','civil','civil branch','cv branch','civil engg'],id:'dept_cv',p:1},
     {k:['electrical','eee','ee','ee department','eee department','electrical engineering','elec','electrical branch','triple e'],id:'dept_ee',p:1},
@@ -1650,21 +1672,25 @@ const allBranches = [...KB.departments.ug, ...KB.departments.pg];
 allBranches.forEach(branch => {
     const code = branch.c;
     const name = sanitize(branch.n.replace(/\s*\([^)]*\)$/, '').trim()).toLowerCase();
-    const shortCode = branch.c.toLowerCase();
+    const branchCode = branch.c.toLowerCase();
+    let aliasCode = branchCode;
+    if (branchCode === 'is') aliasCode = 'ise';
+    if (branchCode === 'me') aliasCode = 'mech';
     
     const kws = [
-        `hod ${shortCode}`, `${shortCode} hod`, `head of ${shortCode}`, `who is the hod of ${shortCode}`,
+        `hod ${aliasCode}`, `${aliasCode} hod`, `head of ${aliasCode}`, `who is the hod of ${aliasCode}`,
         `hod ${name}`, `${name} hod`, `head of ${name}`
     ];
     
     // Branch-specific aliases
-    if (shortCode === 'cs') kws.push('hod cse', 'cse hod', 'computer science hod');
-    if (shortCode === 'ec') kws.push('hod ece', 'ece hod', 'electronics hod');
-    if (shortCode === 'ee') kws.push('hod eee', 'eee hod', 'electrical hod');
-    if (shortCode === 'me') kws.push('mechanical hod', 'mech hod');
-    if (shortCode === 'cv') kws.push('civil hod');
+    if (branchCode === 'cs') kws.push('hod cse', 'cse hod', 'computer science hod', 'head of cse');
+    if (branchCode === 'ec') kws.push('hod ece', 'ece hod', 'electronics hod', 'head of ece');
+    if (branchCode === 'ee') kws.push('hod eee', 'eee hod', 'electrical hod', 'head of eee');
+    if (branchCode === 'me') kws.push('mechanical hod', 'mech hod', 'hod mech', 'hod mechanical', 'head of mechanical', 'head of mech', 'who is the hod of mechanical', 'who is the hod of mech', 'who is hod of mech', 'who is hod of mechanical');
+    if (branchCode === 'cv') kws.push('civil hod', 'hod civil', 'head of civil');
+    if (branchCode === 'is') kws.push('information science hod', 'ise hod', 'hod ise', 'head of ise', 'head of information science', 'who is the hod of ise');
 
-    branchHodIntents.push({ k: kws, id: `hod_${shortCode}`, p: 0.5 });
+    branchHodIntents.push({ k: kws, id: `hod_${branchCode}`, p: 0.5 });
 });
 QA.push(...branchHodIntents);
 
@@ -1673,24 +1699,26 @@ const branchPlacementIntents = [];
 allBranches.forEach(branch => {
     const code = branch.c;
     const name = sanitize(branch.n.replace(/\s*\([^)]*\)$/, '').trim()).toLowerCase();
-    let shortCode = branch.c.toLowerCase();
-    if (shortCode === 'is') shortCode = 'ise';
-    if (shortCode === 'me') shortCode = 'mech';
+    const branchCode = branch.c.toLowerCase();
+    let aliasCode = branchCode;
+    if (branchCode === 'is') aliasCode = 'ise';
+    if (branchCode === 'me') aliasCode = 'mech';
     
     const kws = [
-        `${shortCode} placement`, `${shortCode} placements`, `${shortCode} salary`, `${shortCode} package`, `${shortCode} job`,
+        `${aliasCode} placement`, `${aliasCode} placements`, `${aliasCode} salary`, `${aliasCode} package`, `${aliasCode} job`,
         `${name} placement`, `${name} placements`,
-        `placement in ${shortCode}`, `placements in ${shortCode}`,
+        `placement in ${aliasCode}`, `placements in ${aliasCode}`,
         `placement in ${name}`, `placements in ${name}`
     ];
     
-    if (shortCode === 'cs') kws.push('cse placement', 'cse placements', 'computer science placement');
-    if (shortCode === 'ec') kws.push('ece placement', 'ece placements');
-    if (shortCode === 'ee') kws.push('eee placement', 'eee placements');
-    if (shortCode === 'me') kws.push('mechanical placement', 'mech placement');
-    if (shortCode === 'cv') kws.push('civil placement');
+    if (branchCode === 'cs') kws.push('cse placement', 'cse placements', 'computer science placement');
+    if (branchCode === 'ec') kws.push('ece placement', 'ece placements');
+    if (branchCode === 'ee') kws.push('eee placement', 'eee placements');
+    if (branchCode === 'me') kws.push('mechanical placement', 'mech placement', 'mechanical placements', 'mech placements');
+    if (branchCode === 'cv') kws.push('civil placement', 'civil placements');
+    if (branchCode === 'is') kws.push('ise placement', 'ise placements', 'information science placement', 'information science placements');
 
-    branchPlacementIntents.push({ k: kws, id: `plcmt_${shortCode}`, p: 0.4 });
+    branchPlacementIntents.push({ k: kws, id: `plcmt_${branchCode}`, p: 0.4 });
 });
 QA.push(...branchPlacementIntents);
 
@@ -1699,27 +1727,25 @@ const branchIntakeIntents = [];
 allBranches.forEach(branch => {
     const code = branch.c;
     const name = sanitize(branch.n.replace(/\s*\([^)]*\)$/, '').trim()).toLowerCase();
-    const shortCode = branch.c.toLowerCase();
+    const branchCode = branch.c.toLowerCase();
+    let aliasCode = branchCode;
+    if (branchCode === 'is') aliasCode = 'ise';
+    if (branchCode === 'me') aliasCode = 'mech';
     
     const kws = [
-        `${shortCode} intake`, `intake of ${shortCode}`, `how many seats in ${shortCode}`, `${shortCode} seats`,
-        `${name} intake`, `intake of ${name}`, `how many seats in ${name}`, `${name} seats`
+        `${aliasCode} intake`, `intake of ${aliasCode}`, `how many seats in ${aliasCode}`, `${aliasCode} seats`,
+        `${name} intake`, `intake of ${name}`, `how many seats in ${name}`, `${name} seats`,
+        `${aliasCode} accreditation`, `${aliasCode} accredited`, `${name} accreditation`, `${name} accredited`
     ];
     
-    kws.push(`${shortCode} accreditation`, `${shortCode} accredited`, `${name} accreditation`, `${name} accredited`);
-    
-    if (shortCode === 'cs') kws.push('cse intake', 'cse seats', 'computer science intake');
-    if (shortCode === 'cs') kws.push('cse accreditation', 'computer science accreditation');
-    if (shortCode === 'ec') kws.push('ece accreditation');
-    if (shortCode === 'ee') kws.push('eee accreditation');
-    if (shortCode === 'me') kws.push('mechanical accreditation', 'mech accreditation');
-    if (shortCode === 'cv') kws.push('civil accreditation');
-    if (shortCode === 'ec') kws.push('ece intake', 'ece seats');
-    if (shortCode === 'ee') kws.push('eee intake', 'eee seats');
-    if (shortCode === 'me') kws.push('mechanical intake', 'mech intake');
-    if (shortCode === 'cv') kws.push('civil intake');
+    if (branchCode === 'cs') kws.push('cse intake', 'cse seats', 'computer science intake', 'cse accreditation', 'computer science accreditation');
+    if (branchCode === 'ec') kws.push('ece intake', 'ece seats', 'ece accreditation');
+    if (branchCode === 'ee') kws.push('eee intake', 'eee seats', 'eee accreditation');
+    if (branchCode === 'me') kws.push('mechanical intake', 'mech intake', 'mechanical seats', 'mech seats', 'mechanical accreditation', 'mech accreditation');
+    if (branchCode === 'cv') kws.push('civil intake', 'civil seats', 'civil accreditation');
+    if (branchCode === 'is') kws.push('ise intake', 'ise seats', 'information science intake', 'information science seats', 'ise accreditation');
 
-    branchIntakeIntents.push({ k: kws, id: `intake_${shortCode}`, p: 0.4 });
+    branchIntakeIntents.push({ k: kws, id: `intake_${branchCode}`, p: 0.4 });
 });
 QA.push(...branchIntakeIntents);
 
@@ -2219,7 +2245,7 @@ const ABBR = {
     'prgm': 'ugPrograms', 'prgms': 'ugPrograms', 'prog': 'ugPrograms',
     'dept': 'departments', 'depts': 'departments',
     'adm': 'admissions', 'adms': 'admissions',
-    'plcmnt': 'placements', 'plcmnts': 'placements',
+    'plcmnt': 'placements', 'plcmnts': 'placements', 'plsemnt': 'placements', 'plsemnts': 'placements',
     'hstl': 'hostels', 'hostl': 'hostels',
     'schly': 'scholarships',
     'syll': 'syllabus_1st_sem', 'sylly': 'syllabus_1st_sem',
@@ -2294,7 +2320,7 @@ function classifyIntent(input) {
     strippedInput = cleanInput.split(' ').filter(w => !stopWords.includes(w)).join(' ');
 
     // 0. Abbreviation Check
-    if (ABBR[cleanInput]) return { type: 'fuzzy', id: null, year: extractedYear, suggestions: [ABBR[cleanInput]]  };
+    if (ABBR[cleanInput]) return { type: 'exact', id: ABBR[cleanInput], year: extractedYear, suggestions: [] };
 
     // 0.5 Context-aware multi-turn handling
     const contextIntents = ['_more','_back','_what_else','_yes','_no'];
@@ -2426,7 +2452,18 @@ function classifyIntent(input) {
         // Sort chronologically based on where the keyword appeared in the text
         matchedIntents.sort((a, b) => intentIndices[a.id] - intentIndices[b.id]);
 
-        const uniqueIds = Array.from(new Set(matchedIntents.map(q => q.id)));
+        let uniqueIds = Array.from(new Set(matchedIntents.map(q => q.id)));
+
+        // If a specific facility is matched, filter out broad umbrella intents
+        const specificFacilities = ['sports', 'food', 'mess', 'hostels', 'library', 'transport', 'wifi'];
+        if (uniqueIds.some(id => specificFacilities.includes(id))) {
+            uniqueIds = uniqueIds.filter(id => id !== 'campusLife' && id !== 'facilities');
+        }
+        // If cutoffs is matched, prioritize cutoffs over generic examTypes
+        if (uniqueIds.includes('cutoffs')) {
+            uniqueIds = uniqueIds.filter(id => id !== 'examTypes');
+        }
+
         const topIntents = uniqueIds
             .map(id => QA.find(q => q.id === id))
             .filter(q => q && q.p < 4 && q.id !== 'departments' && q.id !== 'about_disambiguation');
@@ -2440,7 +2477,7 @@ function classifyIntent(input) {
                 if (!multiIds.includes('greet')) multiIds.unshift('greet');
             }
             
-            return { type: 'multi', ids: multiIds, overflow: overflowIds, year: extractedYear, suggestions: []  };
+            return { type: 'multi', ids: multiIds, id: multiIds[0], overflow: overflowIds, year: extractedYear, suggestions: []  };
         }
     }
 
@@ -2452,7 +2489,7 @@ function classifyIntent(input) {
         }
 
         if (matchedIntents.some(q => q.id === 'greet') && best !== 'greet') {
-            return { type: 'multi', ids: ['greet', best], year: extractedYear, suggestions: [] };
+            return { type: 'multi', ids: ['greet', best], id: best, overflow: [best], year: extractedYear, suggestions: [] };
         }
         return { type: isComposite ? 'exact' : 'keyword', id: best, year: extractedYear, suggestions: []  };
     }
@@ -2762,7 +2799,8 @@ function getRelatedTopics(lastId) {
 }
 
 /* =============== TONE HELPER =============== */
-function T(f, p) { return tone === 'funny' ? f : p; }
+// Locked to professional tone
+function T(f, p) { return p; }
 
 /* =============== RESPONSE GENERATOR =============== */
 function findFacultyBySlug(slug) {
@@ -3699,6 +3737,8 @@ function getResponse(id) {
             let isUG = false, isPG = false;
             if (c.endsWith('_ug')) { isUG = true; c = c.replace('_ug', ''); }
             else if (c.endsWith('_pg')) { isPG = true; c = c.replace('_pg', ''); }
+            if (c === 'ise') c = 'is';
+            if (c === 'mech') c = 'me';
 
             const d = KB.departments.ug.find(x=>x.c===c) || KB.departments.pg.find(x=>x.c===c);
             let rawStats = KB.placement_stats[c];
@@ -3890,11 +3930,38 @@ function getResponse(id) {
 const $=s=>document.getElementById(s);
 const chatW=$('chatWindow'),fab=$('chatFab'),badge=$('fabBadge'),msgs=$('chatMessages');
 const typing=$('typingIndicator'),inp=$('userInput'),sendB=$('sendBtn');
-const toneS=$('toneSwitch'),toneL=$('toneLabel'),emojiB=$('emojiBtn'),micB=$('micBtn'),sugs=$('quickSuggestions'),clearB=$('clearBtn');
+const toneS=$('toneSwitch'),toneL=$('toneLabel'),emojiB=$('emojiBtn'),micB=$('micBtn'),sugs=$('quickSuggestions'),clearB=$('clearBtn'),closeHeaderB=$('headerCloseBtn');
 
-fab.addEventListener('click',()=>{chatOpen=!chatOpen;chatW.classList.toggle('open',chatOpen);fab.classList.toggle('active',chatOpen);fab.setAttribute('aria-expanded',chatOpen);if(chatOpen){badge.classList.add('hidden');inp.focus();} if(typeof saveState!=='undefined')saveState();});
-toneS.addEventListener('click',()=>{tone=tone==='funny'?'pro':'funny';toneS.classList.toggle('pro',tone==='pro');toneS.setAttribute('aria-checked',tone==='pro');toneL.textContent=tone==='funny'?'Funny':'Professional'; if(typeof saveState!=='undefined')saveState();});
-toneS.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toneS.click();}});
+fab.addEventListener('click',()=>{
+    chatOpen=!chatOpen;
+    chatW.classList.toggle('open',chatOpen);
+    fab.classList.toggle('active',chatOpen);
+    fab.setAttribute('aria-expanded',chatOpen);
+    if(chatOpen){
+        if(badge) badge.classList.add('hidden');
+        inp.focus();
+        if(typeof rvceTrackEvent==='function'){
+            rvceTrackEvent('bot_open',{pagePath:window.location.pathname,pageUrl:window.location.href,referrer:document.referrer||'',title:document.title});
+        }
+    } else {
+        if(badge) badge.classList.remove('hidden');
+    }
+    if(typeof saveState!=='undefined')saveState();
+});
+if (closeHeaderB) {
+    closeHeaderB.addEventListener('click', () => {
+        chatOpen = false;
+        chatW.classList.remove('open');
+        fab.classList.remove('active');
+        fab.setAttribute('aria-expanded', 'false');
+        if(badge) badge.classList.remove('hidden');
+        if (typeof saveState !== 'undefined') saveState();
+    });
+}
+if (toneS) {
+    toneS.addEventListener('click',()=>{tone='pro';toneS.classList.add('pro');toneS.setAttribute('aria-checked','true');if(toneL)toneL.textContent='Professional'; if(typeof saveState!=='undefined')saveState();});
+    toneS.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toneS.click();}});
+}
 emojiB.addEventListener('click',()=>{disOld();showMenu();});
 sugs.querySelectorAll('.suggestion-chip').forEach(c=>c.addEventListener('click',()=>process(c.dataset.query)));
 sendB.addEventListener('click',()=>{const t=inp.value.trim();if(t)process(t);});
@@ -4019,10 +4086,15 @@ micB.addEventListener('click', () => {
 /* =============== TELEMETRY & QUEUE =============== */
 /* =============== TELEMETRY & QUEUE =============== */
 var currentSessionId = (function() {
-    let sid = sessionStorage.getItem('rvce_sid');
+    let sid = null;
+    try {
+        if (typeof sessionStorage !== 'undefined') sid = sessionStorage.getItem('rvce_sid');
+    } catch(e) {}
     if (!sid) {
         sid = 'sid_' + Math.random().toString(36).substr(2, 9);
-        sessionStorage.setItem('rvce_sid', sid);
+        try {
+            if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('rvce_sid', sid);
+        } catch(e) {}
     }
     return sid;
 })();
@@ -4117,6 +4189,9 @@ function logChatInteraction(query, intent_id, metadata = {}) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     institute_id: 'rvce',
+                    instituteId: 'rvce',
+                    subsite: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
+                    site_category: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
                     api_key: 'rvce_key_12345',
                     sessionId: currentSessionId,
                     events: [{ eventType: 'message', data: { query: query, intent: intent_id, ...metadata } }]
@@ -4178,6 +4253,9 @@ function logMicroInteraction(type, label, metadata = {}) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     institute_id: 'rvce',
+                    instituteId: 'rvce',
+                    subsite: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
+                    site_category: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
                     api_key: 'rvce_key_12345',
                     sessionId: currentSessionId,
                     events: [{ eventType: type, data: { elementId: label, elementText: label, ...metadata } }]
@@ -4547,9 +4625,20 @@ function trackInteraction(type, label) {
 }
 
 /* =============== MESSAGE RENDERING =============== */
+function getBotAvatarMarkup() {
+    let logoUrl = 'rvce_logo.png';
+    if (typeof window !== 'undefined' && window.rvceChatbotSettings && window.rvceChatbotSettings.logoUrl) {
+        logoUrl = window.rvceChatbotSettings.logoUrl;
+    }
+    return `<div class="msg-av" style="position:relative; width:28px; height:28px; min-width:28px; border-radius:8px; background:#ffffff !important; border:1.5px solid rgba(227,30,36,0.3) !important; box-shadow:0 2px 6px rgba(0,0,0,0.1) !important; display:flex !important; align-items:center !important; justify-content:center !important; overflow:hidden !important; flex-shrink:0 !important; padding:2px !important;">` +
+           `<img src="${logoUrl}" alt="RVCE" style="width:100% !important; height:100% !important; object-fit:contain !important; border-radius:6px !important; display:block !important; background:#ffffff !important;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';">` +
+           `<span style="display:none; width:100%; height:100%; align-items:center; justify-content:center; font-weight:800; font-size:11px; color:#E31E24; font-family:'Inter',sans-serif; user-select:none; background:#ffffff;">RV</span>` +
+           `</div>`;
+}
+
 function addUser(text) {
     const m=document.createElement('div'); m.className='message user';
-    m.innerHTML=`<div class="msg-av"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><div class="msg-body"><div class="msg-bubble">${esc(text)}</div></div>`;
+    m.innerHTML=`<div class="msg-av" style="width:28px; height:28px; min-width:28px; border-radius:8px; background:rgba(255,255,255,0.15); display:flex; align-items:center; justify-content:center; flex-shrink:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" style="width:14px; height:14px; stroke:#ffffff; fill:none; display:block;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><div class="msg-body"><div class="msg-bubble">${esc(text)}</div></div>`;
     msgs.appendChild(m); scr();
 }
 
@@ -4623,7 +4712,7 @@ function addBot(text, buttons, noMenu) {
     });
     fmt = fmt.replace(/\n/g,'<br>');
     
-    m.innerHTML=`<div class="msg-av"><img src="rvce_logo.png" alt="RVCE Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 5px; background-color: #fff; padding: 1px;"></div><div class="msg-body"><div class="msg-bubble">${fmt}</div>${bh}</div>`;
+    m.innerHTML = getBotAvatarMarkup() + `<div class="msg-body"><div class="msg-bubble">${fmt}</div>${bh}</div>`;
     msgs.appendChild(m);
     
     m.querySelectorAll('.act-btn[data-action]').forEach(b=>b.addEventListener('click',()=>{disOld();handleAction(b.dataset.action);}));
@@ -4632,7 +4721,7 @@ function addBot(text, buttons, noMenu) {
 
 function addBotWarn(text) {
     const m=document.createElement('div'); m.className='message bot';
-    m.innerHTML=`<div class="msg-av"><img src="rvce_logo.png" alt="RVCE Logo" style="width: 100%; height: 100%; object-fit: contain; border-radius: 5px; background-color: #fff; padding: 1px;"></div><div class="msg-body"><div class="msg-bubble warn">${text.replace(/\n/g,'<br>')}</div><div class="msg-btns"><button class="act-btn mn" data-action="menu">📋 Main Menu</button></div></div>`;
+    m.innerHTML = getBotAvatarMarkup() + `<div class="msg-body"><div class="msg-bubble warn">${text.replace(/\n/g,'<br>')}</div><div class="msg-btns"><button class="act-btn mn" data-action="menu">📋 Main Menu</button></div></div>`;
     msgs.appendChild(m);
     m.querySelectorAll('.act-btn[data-action]').forEach(b=>b.addEventListener('click',()=>{disOld();handleAction(b.dataset.action);}));
     scr();
@@ -4675,11 +4764,7 @@ function renderHODCard(d) {
 }
 
 function botReply(r) {
-    if(!r) return;
-    if (typeof window.rvceTrackEvent === 'function') {
-        window.rvceTrackEvent('bot_reply', { botReply: r.text || '' });
-    }
-    showTyp();
+    if(!r)return;showTyp();
     const d=400+Math.min((r.text||'').length*4,700);
     setTimeout(()=>{
         hideTyp();
@@ -4750,19 +4835,6 @@ function hideTyp() { typing.classList.remove('show'); }
 function scr() { requestAnimationFrame(()=>{msgs.scrollTop=msgs.scrollHeight;}); }
 function esc(t) { const d=document.createElement('div');d.textContent=t;return d.innerHTML; }
 
-/* =============== PARTICLES =============== */
-const cvs=$('particles'),ctx=cvs.getContext('2d');let pts=[];
-function rz(){cvs.width=innerWidth;cvs.height=innerHeight;}
-addEventListener('resize',rz);rz();
-for(let i=0;i<50;i++)pts.push({x:Math.random()*cvs.width,y:Math.random()*cvs.height,vx:(Math.random()-0.5)*0.3,vy:(Math.random()-0.5)*0.3,r:Math.random()*2+0.5,a:Math.random()*0.3+0.1});
-function draw(){
-    ctx.clearRect(0,0,cvs.width,cvs.height);
-    pts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;if(p.x<0)p.x=cvs.width;if(p.x>cvs.width)p.x=0;if(p.y<0)p.y=cvs.height;if(p.y>cvs.height)p.y=0;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=`rgba(227,30,36,${p.a})`;ctx.fill();});
-    for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++){const dx=pts[i].x-pts[j].x,dy=pts[i].y-pts[j].y,d=Math.sqrt(dx*dx+dy*dy);if(d<120){ctx.beginPath();ctx.moveTo(pts[i].x,pts[i].y);ctx.lineTo(pts[j].x,pts[j].y);ctx.strokeStyle=`rgba(227,30,36,${0.06*(1-d/120)})`;ctx.lineWidth=0.5;ctx.stroke();}}
-    requestAnimationFrame(draw);
-}
-draw();
-
 /* =============== SAFE STORAGE =============== */
 const SafeStorage = {
     mem: {},
@@ -4799,12 +4871,32 @@ setTimeout(()=>{
     if (savedHtml) {
         // Restore previous chat state instantly
         msgs.innerHTML = savedHtml;
+        // Normalize any cached avatars to ensure white background and visible logo
+        msgs.querySelectorAll('.msg-av:not(.user .msg-av)').forEach(av => {
+            av.style.setProperty('background', '#ffffff', 'important');
+            av.style.setProperty('border', '1.5px solid rgba(227, 30, 36, 0.3)', 'important');
+            av.style.setProperty('padding', '2px', 'important');
+            const img = av.querySelector('img');
+            if (img) {
+                img.style.setProperty('background', '#ffffff', 'important');
+                img.style.setProperty('object-fit', 'contain', 'important');
+                img.style.setProperty('display', 'block', 'important');
+            }
+        });
         const savedTone = SafeStorage.getItem('rvce_chat_tone');
-        if(savedTone === 'pro') { tone = 'pro'; toneS.classList.add('pro'); toneL.textContent = 'Professional'; }
-        if(SafeStorage.getItem('rvce_chat_open') === '1') {
-            chatOpen=true; chatW.classList.add('open'); fab.classList.add('active'); badge.classList.add('hidden');
+        if (savedTone === 'pro') {
+            tone = 'pro';
+            if (toneS) toneS.classList.add('pro');
+            if (toneL) toneL.textContent = 'Professional';
+        }
+        if (SafeStorage.getItem('rvce_chat_open') === '1') {
+            chatOpen = true;
+            if (chatW) chatW.classList.add('open');
+            if (fab) fab.classList.add('active');
+            if (badge) badge.classList.add('hidden');
         } else {
-            chatOpen=false; badge.classList.add('hidden');
+            chatOpen = false;
+            if (badge) badge.classList.remove('hidden');
         }
         
         // Re-bind all historic action buttons
@@ -4813,152 +4905,79 @@ setTimeout(()=>{
         });
         scr();
     } else {
-        // Standard first-time load
-        chatOpen=true;chatW.classList.add('open');fab.classList.add('active');badge.classList.add('hidden');
-        setTimeout(()=>{addBot(T("Hey there! 👋 Welcome to RVCE — the place where engineers are crafted! Ask me anything about admissions, placements, campus, and more!","Hello! Welcome to RV College of Engineering. I'm here to help you with information about admissions, placements, campus facilities, and more."),[],true);setTimeout(showMenu,900);},350);
+        // Standard first-time load: resting closed with notification badge "1" visible (matching user specification)
+        chatOpen=false;
+        if(badge) badge.classList.remove('hidden');
+        setTimeout(()=>{
+            addBot(T("Hey there! 👋 Welcome to RVCE — the place where engineers are crafted! Ask me anything about admissions, placements, campus, and more!","Hello! Welcome to RV College of Engineering. I'm here to help you with information about admissions, placements, campus facilities, and more."),[],true);
+            setTimeout(showMenu,400);
+        },200);
     }
 
-    /* =============== DEEP INTERACTION TRACKING =============== */
+    /* =============== DEEP INTERACTION TRACKING (SCOPED & PASSIVE) =============== */
 
-    // --- 1. CLICK TRACKING (every single click) ---
-    document.addEventListener('click', (e) => {
-        const target = e.target;
-        
-        // Suggestion Buttons
-        if (target.closest('.act-btn')) {
-            const btn = target.closest('.act-btn');
-            const label = btn.textContent.trim();
-            const action = btn.dataset.action || 'link';
-            logMicroInteraction('click', `Button: ${label}`, { action, element: 'act-btn' });
-            return;
-        }
-        // Links inside chat
-        if (target.closest('a')) {
-            const link = target.closest('a');
-            logMicroInteraction('click', `Link: ${link.textContent.trim().substring(0, 60)}`, { url: link.href, element: 'a' });
-            return;
-        }
-        // Tone Switch
-        if (target.closest('.tone-sw') || target.closest('#tone-switch')) {
-            logMicroInteraction('ui', 'Tone Toggle', { newTone: tone === 'funny' ? 'pro' : 'funny' });
-            return;
-        }
-        // FAB open/close
-        if (target.closest('.rv-fab')) {
-            logMicroInteraction('ui', chatOpen ? 'Chat Closed' : 'Chat Opened');
-            return;
-        }
-        // Close button
-        if (target.closest('.rv-close')) {
-            logMicroInteraction('ui', 'Chat Closed (X)');
-            return;
-        }
-        // Mic button
-        if (target.closest('#mic-btn') || target.closest('.mic-btn')) {
-            logMicroInteraction('ui', 'Voice Input Triggered');
-            return;
-        }
-        // Send button
-        if (target.closest('#send-btn') || target.closest('.send-btn')) {
-            logMicroInteraction('ui', 'Send Button Clicked');
-            return;
-        }
-        // Any other click inside chatbot container
-        if (target.closest('.rv-chatbot-wrap') || target.closest('#rv-chatbot')) {
-            const tag = target.tagName.toLowerCase();
-            const cls = target.className ? target.className.toString().substring(0, 40) : '';
-            logMicroInteraction('click', `Element: ${tag}`, { class: cls });
-        }
-    });
+    // --- 1. CLICK TRACKING (strictly scoped inside chatbot widget) ---
+    const botRoot = document.getElementById('rvce-chatbot-root');
+    if (botRoot) {
+        botRoot.addEventListener('click', (e) => {
+            const target = e.target;
+            if (!target) return;
+            
+            // Suggestion Buttons
+            if (target.closest('.act-btn')) {
+                const btn = target.closest('.act-btn');
+                const label = btn.textContent.trim();
+                const action = btn.dataset.action || 'link';
+                logMicroInteraction('click', `Button: ${label}`, { action, element: 'act-btn' });
+                return;
+            }
+            // Quick Suggestion Chips
+            if (target.closest('.suggestion-chip')) {
+                const chip = target.closest('.suggestion-chip');
+                logMicroInteraction('click', `Chip: ${chip.textContent.trim()}`, { query: chip.dataset.query });
+                return;
+            }
+            // Links inside chat
+            if (target.closest('a')) {
+                const link = target.closest('a');
+                logMicroInteraction('click', `Link: ${link.textContent.trim().substring(0, 60)}`, { url: link.href, element: 'a' });
+                return;
+            }
+        }, { passive: true });
+    }
 
-    // --- 2. HOVER TRACKING (interest signals on buttons/links) ---
-    let hoverTimer = null;
-    document.addEventListener('mouseover', (e) => {
-        const btn = e.target.closest('.act-btn');
-        const link = e.target.closest('.msg-bubble a');
-        const hoverTarget = btn || link;
-        if (hoverTarget) {
-            hoverTimer = setTimeout(() => {
-                const label = hoverTarget.textContent.trim().substring(0, 60);
-                logMicroInteraction('hover', label, { duration: '500ms+', element: hoverTarget.tagName });
-            }, 500); // Only log if user hovers for 500ms+ (real interest)
-        }
-    });
-    document.addEventListener('mouseout', (e) => {
-        if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
-    });
-
-    // --- 3. COPY TRACKING (high-value signal: user copied chatbot text) ---
+    // --- 2. COPY TRACKING (only when user copies from chatbot) ---
     document.addEventListener('copy', () => {
-        const selection = window.getSelection();
-        if (selection && selection.toString().trim()) {
-            const copied = selection.toString().trim().substring(0, 100);
-            logMicroInteraction('copy', copied, { length: selection.toString().length });
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return;
+        const node = sel.anchorNode;
+        if (node && node.parentElement && node.parentElement.closest('#rvce-chatbot-root')) {
+            const text = sel.toString().trim();
+            if (text) {
+                logMicroInteraction('copy', text.substring(0, 100), { length: text.length });
+            }
         }
-    });
+    }, { passive: true });
 
-    // --- 4. TYPING VELOCITY (frustration/familiarity detector) ---
-    let keyTimestamps = [];
-    if (inp) {
-        inp.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') return;
-            keyTimestamps.push(Date.now());
-        });
-        // Log typing velocity when user submits (press Enter or click Send)
-        inp.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && keyTimestamps.length > 2) {
-                const intervals = [];
-                for (let i = 1; i < keyTimestamps.length; i++) {
-                    intervals.push(keyTimestamps[i] - keyTimestamps[i-1]);
-                }
-                const avgMs = Math.round(intervals.reduce((a,b) => a+b, 0) / intervals.length);
-                const wpm = Math.round(60000 / (avgMs * 5)); // rough WPM
-                logMicroInteraction('typing', `Speed: ${avgMs}ms/key (~${wpm} WPM)`, { avgMs, wpm, keyCount: keyTimestamps.length });
-                keyTimestamps = [];
-            }
-        });
-        // Input focus/blur
-        inp.addEventListener('focus', () => {
-            logMicroInteraction('focus', 'Input Focused');
-        });
-        inp.addEventListener('blur', () => {
-            if (inp.value.trim()) {
-                logMicroInteraction('blur', 'Input Blurred (with text)', { partial: inp.value.trim().substring(0, 50) });
-            }
-        });
-    }
-
-    // --- 5. SCROLL DEPTH (how far user reads in chat) ---
-    let maxScrollPercent = 0;
-    let scrollLogTimer = null;
-    if (msgs) {
-        msgs.addEventListener('scroll', () => {
-            const scrollTop = msgs.scrollTop;
-            const scrollHeight = msgs.scrollHeight - msgs.clientHeight;
-            if (scrollHeight > 0) {
-                const percent = Math.round((scrollTop / scrollHeight) * 100);
-                if (percent > maxScrollPercent + 20) { // Log every 20% threshold
-                    maxScrollPercent = percent;
-                    clearTimeout(scrollLogTimer);
-                    scrollLogTimer = setTimeout(() => {
-                        logMicroInteraction('scroll', `Depth: ${maxScrollPercent}%`, { depth: maxScrollPercent });
-                    }, 300);
-                }
-            }
-        });
-    }
-
-    // --- 6. DWELL TIME (time spent with chat open per page session) ---
+    // --- 3. DWELL TIME (time spent with chat open per page session) ---
     let chatOpenedAt = chatOpen ? Date.now() : null;
-    const origToggle = fab ? fab.onclick : null;
-    // Observe chat open/close to measure dwell time
     const chatObserver = new MutationObserver(() => {
         if (chatW && chatW.classList.contains('open')) {
-            if (!chatOpenedAt) chatOpenedAt = Date.now();
+            if (!chatOpenedAt) {
+                chatOpenedAt = Date.now();
+                // Send device info only when student opens chat for the first time
+                logChatInteraction('Chat Opened', 'chat_start', { 
+                    userAgent: navigator.userAgent, 
+                    screen: window.innerWidth + 'x' + window.innerHeight 
+                });
+                if (window.rvceTrackBotOpen) {
+                    window.rvceTrackBotOpen();
+                }
+            }
         } else {
             if (chatOpenedAt) {
                 const dwellSec = Math.round((Date.now() - chatOpenedAt) / 1000);
-                if (dwellSec >= 3) { // Only log if open for 3+ seconds
+                if (dwellSec >= 3) {
                     logMicroInteraction('dwell', `Chat open for ${dwellSec}s`, { seconds: dwellSec });
                 }
                 chatOpenedAt = null;
@@ -4967,31 +4986,15 @@ setTimeout(()=>{
     });
     if (chatW) chatObserver.observe(chatW, { attributes: true, attributeFilter: ['class'] });
 
-    // --- 7. PAGE VISIBILITY (did user switch tabs?) ---
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-            logMicroInteraction('visibility', 'Tab Hidden (left page)');
-        } else {
-            logMicroInteraction('visibility', 'Tab Visible (returned)');
-        }
-    });
-
-    // --- 8. SESSION END (before page unload) ---
+    // --- 4. SESSION END (before page unload) ---
     window.addEventListener('beforeunload', () => {
         if (chatOpenedAt) {
             const dwellSec = Math.round((Date.now() - chatOpenedAt) / 1000);
             logMicroInteraction('session', `Session ended (dwell: ${dwellSec}s)`, { totalDwell: dwellSec });
         }
-        logMicroInteraction('session', 'Page Unload');
-    });
+    }, { passive: true });
 
-    // --- 9. DEVICE TELEMETRY ---
-    logChatInteraction('Session Start', 'device_info', { 
-        userAgent: navigator.userAgent, 
-        screen: window.innerWidth + 'x' + window.innerHeight 
-    });
-
-},600);
+}, 300);
 
 }
 if (document.readyState === 'loading') {

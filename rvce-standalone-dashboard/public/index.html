@@ -4280,7 +4280,6 @@
 
                     const startTimeStr = startDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
                     const endTimeStr = endDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-                    const entryPath = s.entryPage ? (new URL(s.entryPage, 'https://rvce.edu.in').pathname || '/') : '/';
                     const exitPath = s.exitPage ? (new URL(s.exitPage, 'https://rvce.edu.in').pathname || '/') : entryPath;
                     const messageCount = s.dialogue?.length || s.metrics?.messageCount || (s.chatEngagement === 'conversed' ? 2 : 0);
 
