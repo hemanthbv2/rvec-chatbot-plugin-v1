@@ -732,8 +732,9 @@ $rest_url   = rest_url('rvce/v1');
                             <div style="font-family:'JetBrains Mono',monospace; font-weight:700; color:#818cf8; cursor:pointer;" onclick="openReplayDrawer('${s.sessionId}')">
                                 ${s.sessionId.slice(0, 16)}...
                             </div>
-                            <div style="display:flex; gap:4px; margin-top:4px;">
+                            <div style="display:flex; gap:4px; margin-top:4px; flex-wrap:wrap;">
                                 ${s.isBot ? '<span class="tag tag-red">🤖 Crawler</span>' : '<span class="tag tag-blue">👤 Real Visitor</span>'}
+                                ${(Array.isArray(s.subsitesTouched) && s.subsitesTouched.length > 1) ? '<span class="tag" style="background:rgba(236,72,153,0.2); border:1px solid #ec4899; color:#f472b6; font-size:10px; font-weight:700;">🌐 Cross-Portal</span>' : ''}
                                 ${turns > 0 ? '<span class="tag tag-green">💬 Conversed</span>' : '<span class="tag tag-gray">🌐 Browsed</span>'}
                             </div>
                         </td>

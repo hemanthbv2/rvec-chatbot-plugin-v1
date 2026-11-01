@@ -3783,7 +3783,7 @@
                 const [ov, clarity, sessions, unanswered, interactions] = await Promise.all([
                     fetchWithAuth(`/api/dashboard/overview?segment=${currentSegment}`),
                     fetchWithAuth(`/api/dashboard/clarity?segment=${currentSegment}`),
-                    fetchWithAuth(`/api/dashboard/sessions?segment=${currentSegment}&limit=80`),
+                    fetchWithAuth(`/api/dashboard/sessions?segment=${currentSegment}&subsite=${currentSubsite}&limit=80`),
                     fetchWithAuth('/api/dashboard/unanswered'),
                     fetchWithAuth('/api/dashboard/interactions?limit=400')
                 ]);
@@ -4284,6 +4284,8 @@
                     const messageCount = s.dialogue?.length || s.metrics?.messageCount || (s.chatEngagement === 'conversed' ? 2 : 0);
 
                     // Bot vs User Badge
+                    const isMultiPortal = Array.isArray(s.subsitesTouched) && s.subsitesTouched.length > 1;
+                    const multiPortalBadge = isMultiPortal ? '<span class="tag" style="background:rgba(236,72,153,0.2); border:1px solid #ec4899; color:#f472b6; font-size:10px; font-weight:700;">🌐 Cross-Portal</span> ' : '';
                     const botBadge = s.isBot
                         ? `<span class="tag tag-pink" style="margin-right:4px;">🤖 ${s.botName || 'Bot'}</span>`
                         : `<span class="tag tag-blue" style="margin-right:4px;">👤 User</span>`;
@@ -4306,7 +4308,7 @@
                                 ${s.sessionId.substring(0, 16)}
                             </div>
                             <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-bottom:3px;">
-                                ${botBadge} ${engagementBadge}
+                                ${botBadge} ${multiPortalBadge} ${engagementBadge}
                             </div>
                             <div style="font-weight:600; color:#fff; font-size:12px;">${geoStr}</div>
                             <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">💻 ${deviceStr}</div>

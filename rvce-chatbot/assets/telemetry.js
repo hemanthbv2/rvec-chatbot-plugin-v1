@@ -31,34 +31,110 @@
     }
 
     // Session continuity with 30-minute rolling timeout
+        // Cross-Domain & Multi-Subportal Session Engine
     const SESSION_STORAGE_KEY = 'rvce_telemetry_session';
+    const SESSION_COOKIE_NAME = 'rvce_sid';
     const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
-    function getOrCreateSessionId() {
+    function getRootDomain() {
         try {
-            if (typeof window !== 'undefined' && window.sessionStorage) {
-                const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
-                if (raw) {
-                    const parsed = JSON.parse(raw);
-                    if (parsed && parsed.id && (Date.now() - (parsed.lastActive || 0) < SESSION_TIMEOUT_MS)) {
-                        parsed.lastActive = Date.now();
-                        window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(parsed));
-                        return parsed.id;
-                    }
-                }
-                const newId = 'sess_rvce_' + Math.random().toString(36).substr(2, 9);
-                window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
-                    id: newId,
-                    lastActive: Date.now()
-                }));
-                return newId;
+            const host = window.location.hostname;
+            if (!host || host === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return '';
+            const parts = host.split('.');
+            if (parts.length >= 2) {
+                const isTwoPartTld = parts.length > 2 && (parts[parts.length - 2] === 'edu' || parts[parts.length - 2] === 'ac' || parts[parts.length - 2] === 'co' || parts[parts.length - 2] === 'gov');
+                return '.' + parts.slice(isTwoPartTld ? -3 : -2).join('.');
             }
         } catch (e) {}
-        return 'sess_rvce_' + Math.random().toString(36).substr(2, 9);
+        return '';
+    }
+
+    function readCookie(name) {
+        try {
+            const match = document.cookie.match(new RegExp('(^|;\\s*)(' + name + ')=([^;]*)'));
+            return match ? decodeURIComponent(match[3]) : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function writeCookie(name, val, maxAgeSec = 86400) {
+        try {
+            const rootDomain = getRootDomain();
+            const domainPart = rootDomain ? `; domain=${rootDomain}` : '';
+            const securePart = window.location.protocol === 'https:' ? '; Secure' : '';
+            document.cookie = `${name}=${encodeURIComponent(val)}; path=/${domainPart}; max-age=${maxAgeSec}; SameSite=Lax${securePart}`;
+        } catch (e) {}
+    }
+
+    function getOrCreateSessionId() {
+        let sid = null;
+
+        // 1. Cross-portal URL query parameter handoff (?rvce_sid=... or ?sid=...)
+        try {
+            const urlParams = new URLSearchParams(window.location.search);
+            sid = urlParams.get('rvce_sid') || urlParams.get('sid');
+            if (sid && /^sess_[a-zA-Z0-9_-]+$/.test(sid)) {
+                writeCookie(SESSION_COOKIE_NAME, sid);
+                try {
+                    window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ id: sid, lastActive: Date.now() }));
+                    window.localStorage.setItem('rvce_sid', sid);
+                } catch (e) {}
+                return sid;
+            }
+        } catch (e) {}
+
+        // 2. Shared Root Domain Cookie (.rvce.edu.in)
+        const cookieSid = readCookie(SESSION_COOKIE_NAME);
+        if (cookieSid && /^sess_[a-zA-Z0-9_-]+$/.test(cookieSid)) {
+            sid = cookieSid;
+            try {
+                window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ id: sid, lastActive: Date.now() }));
+                window.localStorage.setItem('rvce_sid', sid);
+            } catch (e) {}
+            return sid;
+        }
+
+        // 3. sessionStorage / localStorage
+        try {
+            if (typeof window !== 'undefined') {
+                if (window.sessionStorage) {
+                    const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (parsed && parsed.id && (Date.now() - (parsed.lastActive || 0) < SESSION_TIMEOUT_MS)) {
+                            parsed.lastActive = Date.now();
+                            window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(parsed));
+                            writeCookie(SESSION_COOKIE_NAME, parsed.id);
+                            return parsed.id;
+                        }
+                    }
+                }
+                const localSid = window.localStorage.getItem('rvce_sid');
+                if (localSid && /^sess_[a-zA-Z0-9_-]+$/.test(localSid)) {
+                    writeCookie(SESSION_COOKIE_NAME, localSid);
+                    return localSid;
+                }
+            }
+        } catch (e) {}
+
+        // 4. Generate new resilient session ID
+        const newId = 'sess_rvce_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+        writeCookie(SESSION_COOKIE_NAME, newId);
+        try {
+            if (window.sessionStorage) {
+                window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ id: newId, lastActive: Date.now() }));
+            }
+            if (window.localStorage) {
+                window.localStorage.setItem('rvce_sid', newId);
+            }
+        } catch (e) {}
+        return newId;
     }
 
     function touchSession() {
         try {
+            writeCookie(SESSION_COOKIE_NAME, SESSION_ID);
             if (typeof window !== 'undefined' && window.sessionStorage) {
                 const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
                 if (raw) {
@@ -441,4 +517,41 @@
             subsite: getSubsite()
         }
     });
+
+    // Expose Session ID globally for Chatbot Engine
+    window.rvceSessionId = SESSION_ID;
+    window.rvceGetSessionId = function() { return SESSION_ID; };
+
+    // Automatic Cross-Portal Link Decoration for seamless session handoff
+    document.addEventListener('click', (e) => {
+        const link = e.target.closest('a');
+        if (!link || !link.href) return;
+        try {
+            const targetUrl = new URL(link.href, window.location.href);
+            const isRvce = targetUrl.hostname.includes('rvce.edu.in') || (targetUrl.hostname === window.location.hostname);
+            const isDifferentHostOrSubsite = targetUrl.hostname !== window.location.hostname;
+            if (isRvce && isDifferentHostOrSubsite && !targetUrl.searchParams.has('rvce_sid')) {
+                targetUrl.searchParams.set('rvce_sid', SESSION_ID);
+                link.href = targetUrl.toString();
+            }
+        } catch (linkErr) {}
+    }, true);
+
+    // Track Cross-Subsite Navigation Transition
+    try {
+        const currentSub = getSubsite();
+        const prevSub = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem('rvce_current_subsite') : null;
+        if (prevSub && prevSub !== currentSub) {
+            trackEvent('cross_subsite_hop', {
+                fromSubsite: prevSub,
+                toSubsite: currentSub,
+                referrer: document.referrer || '',
+                detail: 'Visitor navigated from ' + prevSub + ' portal to ' + currentSub + ' portal'
+            }, true);
+        }
+        if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem('rvce_current_subsite', currentSub);
+        }
+    } catch (hopErr) {}
+
 })();

@@ -4086,20 +4086,28 @@ micB.addEventListener('click', () => {
 /* =============== TELEMETRY & QUEUE =============== */
 /* =============== TELEMETRY & QUEUE =============== */
 var currentSessionId = (function() {
+    if (typeof window !== 'undefined' && window.rvceSessionId) return window.rvceSessionId;
     let sid = null;
     try {
-        if (typeof sessionStorage !== 'undefined') sid = sessionStorage.getItem('rvce_sid');
+        const urlParams = new URLSearchParams(window.location.search);
+        sid = urlParams.get('rvce_sid') || urlParams.get('sid');
+        if (!sid && typeof sessionStorage !== 'undefined') sid = sessionStorage.getItem('rvce_sid');
+        if (!sid && typeof localStorage !== 'undefined') sid = localStorage.getItem('rvce_sid');
     } catch(e) {}
     if (!sid) {
-        sid = 'sid_' + Math.random().toString(36).substr(2, 9);
+        sid = 'sess_rvce_' + Math.random().toString(36).substr(2, 9);
         try {
             if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('rvce_sid', sid);
+            if (typeof localStorage !== 'undefined') localStorage.setItem('rvce_sid', sid);
         } catch(e) {}
     }
     return sid;
 })();
 
 function getSID() {
+    if (typeof window !== 'undefined' && window.rvceSessionId) {
+        currentSessionId = window.rvceSessionId;
+    }
     return currentSessionId;
 }
 

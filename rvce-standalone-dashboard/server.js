@@ -45,11 +45,17 @@ function broadcastEvent(type, data) {
 }
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: function(origin, callback) {
+        // Allow all RVCE sub-portals and dev origins
+        return callback(null, true);
+    },
+    credentials: true
+}));
 
-// Security Headers & Framing Configuration (Allows WordPress Admin iframe embedding)
+// Security Headers & Framing Configuration (Allows all 3 WordPress Admin portals to embed iframe)
 app.use((req, res, next) => {
-    res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://rvce.edu.in http://localhost:* http://127.0.0.1:*");
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://rvce.edu.in https://*.rvce.edu.in http://localhost:* http://127.0.0.1:* https://*.vercel.app");
     res.removeHeader('X-Frame-Options');
     next();
 });
@@ -284,6 +290,7 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
         const geoInfo = await resolveGeoLocation(req, clientIp);
         const firstMeta = events[0]?.metaData || events[0]?.data || events[0]?.m || {};
         const deviceInfo = parseDeviceEnvironment(req.headers['user-agent'], firstMeta.device || firstMeta.platform || events[0]?.screen);
+        const requestSubsite = String(body.subsite || firstMeta.subsite || events[0]?.subsite || 'main').toLowerCase();
 
         const interactionDocs = [];
         const leadDocs = [];
@@ -302,8 +309,11 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
         else if (rawReferrer.includes('instagram')) referrerType = 'Instagram';
         else if (rawReferrer.includes('linkedin')) referrerType = 'LinkedIn';
         let utmParams = firstMeta.utm || {};
+        const batchSubsites = new Set([requestSubsite]);
 
         for (let e of events) {
+            const eventSubsite = String(e.subsite || e.data?.subsite || e.metaData?.subsite || requestSubsite || 'main').toLowerCase();
+            batchSubsites.add(eventSubsite);
             const eventType = e.eventType || e.t || 'message';
             const meta = e.metaData || e.data || e.m || {};
             const pageUrl = e.pageUrl || meta.pageUrl || '';
@@ -353,6 +363,10 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                 stepType = 'link_click';
                 stepTitle = `Clicked Link: "${linkText || linkUrl}"`;
                 stepDetail = `Redirects to ➔ ${linkUrl} (${meta.isExternal ? 'External Site' : 'Internal Page'})`;
+            } else if (eventType === 'cross_subsite_hop') {
+                stepType = 'cross_subsite_hop';
+                stepTitle = `🌐 Subsite Hop: ${(meta.fromSubsite || 'portal').toUpperCase()} ➔ ${(meta.toSubsite || 'portal').toUpperCase()}`;
+                stepDetail = meta.detail || `Visitor transitioned from ${meta.fromSubsite} portal to ${meta.toSubsite} portal`;
             } else if (eventType === 'page_redirect') {
                 stepType = 'page_redirect';
                 stepTitle = `Redirected to ${meta.toPath || pagePath}`;
@@ -377,6 +391,7 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
 
             journeySteps.push({
                 step: e.stepIndex || (journeySteps.length + 1),
+                subsite: eventSubsite,
                 type: stepType,
                 title: stepTitle,
                 detail: stepDetail,
@@ -545,6 +560,8 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                 isBot: isBot,
                 botName: botName,
                 botCategory: botCategory,
+                subsite: requestSubsite,
+                subsitesTouched: [requestSubsite],
                 visitorType: visitorType,
                 chatEngagement: 'browsed_only',
                 metrics: {
@@ -581,6 +598,13 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
             memSession.botOpenedOnPage = botOpenedOnPage;
         } else if (!memSession.botOpenedOnPage) {
             memSession.botOpenedOnPage = landingPage;
+        }
+        if (!memSession.subsitesTouched) {
+            memSession.subsitesTouched = Array.from(batchSubsites);
+        } else {
+            batchSubsites.forEach(sub => {
+                if (!memSession.subsitesTouched.includes(sub)) memSession.subsitesTouched.push(sub);
+            });
         }
         memSession.lastActive = new Date();
         memSession.lastIntent = lastIntent;
@@ -859,6 +883,8 @@ async function getUnifiedSessions(forceRefresh = false) {
                         frustrationScore: s.metrics?.frustrationScore || s.metrics?.frustration_score || 0
                     },
                     dialogue: s.dialogue || [],
+                    subsite: (memStore.sessions.get(s.session_id)?.subsite) || s.subsite || 'main',
+                    subsitesTouched: (memStore.sessions.get(s.session_id)?.subsitesTouched) || s.subsites_touched || [s.subsite || 'main'],
                     botOpenedOnPage: (memStore.sessions.get(s.session_id)?.botOpenedOnPage) || s.botOpenedOnPage || s.bot_opened_page || s.bot_opened_on_page || s.metrics?.bot_opened_on_page || s.metrics?.botOpenedOnPage || (s.entry_page ? (s.entry_page.startsWith('http') ? new URL(s.entry_page).pathname : s.entry_page) : '') || (s.landing_page ? (s.landing_page.startsWith('http') ? new URL(s.landing_page).pathname : s.landing_page) : '') || '/',
                     sentiment: s.sentiment || 'Neutral',
                     lastIntent: s.last_intent || '',
@@ -1352,9 +1378,19 @@ app.get('/api/dashboard/bots', authenticateToken, async (req, res) => {
 // Sessions List (Enriched with Last Query, Clicked Buttons/Links, and Journey Route)
 app.get('/api/dashboard/sessions', authenticateToken, async (req, res) => {
     try {
-        const { filter, search, limit, segment } = req.query;
+        const { filter, search, limit, segment, subsite } = req.query;
         const queryLimit = Math.min(parseInt(limit) || 100, 300);
         let list = await getUnifiedSessions();
+
+        if (subsite && subsite !== 'all') {
+            const subLow = String(subsite).toLowerCase();
+            list = list.filter(s => {
+                const sSub = String(s.subsite || 'main').toLowerCase();
+                const touched = Array.isArray(s.subsitesTouched) ? s.subsitesTouched.map(x => String(x).toLowerCase()) : [sSub];
+                const journeyTouched = Array.isArray(s.journey) && s.journey.some(j => String(j.subsite || '').toLowerCase() === subLow);
+                return sSub === subLow || touched.includes(subLow) || journeyTouched;
+            });
+        }
 
         if (segment && segment !== 'all') {
             list = list.filter(s => filterSessionBySegment(s, segment));
@@ -2359,8 +2395,12 @@ function executeSeedData() {
     const CRAWLER_NAMES = ['Googlebot', 'Bingbot', 'SemrushBot', 'ByteSpider', 'Python-Scraper', 'HeadlessChrome Crawler', 'YandexBot', 'AhrefsBot'];
     const CRAWLER_CATS = ['Search Engine Indexer', 'Search Engine Indexer', 'SEO Intelligence', 'Search Engine Indexer', 'Scraper Script', 'Automated Crawler', 'Search Engine Indexer', 'SEO Intelligence'];
 
+    const SUBSITE_KEYS = ['main', 'departments', 'alumni'];
     for (let i = 0; i < 34; i++) {
         const sid = 'sess_journey_' + (1000 + i);
+        const assignedSubsite = SUBSITE_KEYS[i % SUBSITE_KEYS.length];
+        const isCrossSite = (i % 4 === 0);
+        const touchedSubsites = isCrossSite ? [assignedSubsite, 'main'] : [assignedSubsite];
         const cityObj = mockCities[i % mockCities.length];
         const refObj = mockReferrers[i % mockReferrers.length];
         const scen = SCENARIOS[i % SCENARIOS.length];
@@ -2444,6 +2484,8 @@ function executeSeedData() {
             landingPage: 'https://rvce.edu.in' + triggerPath,
             entryPage: triggerPath,
             botOpenedOnPage: triggerPath,
+            subsite: assignedSubsite,
+            subsitesTouched: touchedSubsites,
             exitPage: scen.redir2 ? scen.redir2.to : 'https://rvce.edu.in/',
             referrer: refObj.ref,
             referrerDomain: refObj.domain,
