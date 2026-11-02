@@ -1681,6 +1681,119 @@ app.delete('/api/dashboard/sessions/:id', authenticateToken, async (req, res) =>
     }
 });
 
+// Bulk Delete Records (All, by Day, or by Month)
+app.all(['/api/dashboard/records', '/api/dashboard/records/delete'], authenticateToken, async (req, res) => {
+    if (req.method !== 'DELETE' && req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+    }
+    try {
+        const type = req.query.type || (req.body && req.body.type) || 'all';
+        const date = req.query.date || (req.body && req.body.date);
+        const month = req.query.month || (req.body && req.body.month);
+
+        let deletedSessionsCount = 0;
+
+        if (type === 'all') {
+            deletedSessionsCount = memStore.sessions.size;
+            memStore.sessions.clear();
+            memStore.interactions = [];
+            memStore.leads.clear();
+            memStore.unanswered.clear();
+
+            if (isMongoConnected) {
+                try {
+                    await Session.deleteMany({});
+                    await Interaction.deleteMany({});
+                    await Lead.deleteMany({});
+                } catch (e) {
+                    console.error('Mongo delete error:', e);
+                }
+            }
+
+            if (supabase) {
+                try {
+                    await supabase.from('interactions').delete().neq('session_id', '___non_existent___');
+                    await supabase.from('sessions').delete().neq('session_id', '___non_existent___');
+                    await supabase.from('leads').delete().neq('session_id', '___non_existent___');
+                } catch (e) {
+                    console.error('Supabase delete error:', e);
+                }
+            }
+        } else if (type === 'day' && date) {
+            const sidsToDelete = [];
+            for (const [sid, s] of memStore.sessions.entries()) {
+                const sDate = new Date(s.startTime || s.createdAt || Date.now()).toISOString().slice(0, 10);
+                if (sDate === date) {
+                    sidsToDelete.push(sid);
+                }
+            }
+            sidsToDelete.forEach(sid => memStore.sessions.delete(sid));
+            memStore.interactions = memStore.interactions.filter(i => {
+                const iDate = new Date(i.timestamp || i.createdAt || Date.now()).toISOString().slice(0, 10);
+                return iDate !== date;
+            });
+            deletedSessionsCount = sidsToDelete.length;
+
+            if (isMongoConnected) {
+                try {
+                    const startDay = new Date(date + 'T00:00:00.000Z');
+                    const endDay = new Date(date + 'T23:59:59.999Z');
+                    await Session.deleteMany({ startTime: { $gte: startDay, $lte: endDay } });
+                    await Interaction.deleteMany({ timestamp: { $gte: startDay, $lte: endDay } });
+                } catch (e) { }
+            }
+
+            if (supabase) {
+                try {
+                    await supabase.from('interactions').delete().gte('timestamp', date + 'T00:00:00Z').lte('timestamp', date + 'T23:59:59Z');
+                    await supabase.from('sessions').delete().gte('start_time', date + 'T00:00:00Z').lte('start_time', date + 'T23:59:59Z');
+                } catch (e) { }
+            }
+        } else if (type === 'month' && month) {
+            const sidsToDelete = [];
+            for (const [sid, s] of memStore.sessions.entries()) {
+                const sMonth = new Date(s.startTime || s.createdAt || Date.now()).toISOString().slice(0, 7);
+                if (sMonth === month) {
+                    sidsToDelete.push(sid);
+                }
+            }
+            sidsToDelete.forEach(sid => memStore.sessions.delete(sid));
+            memStore.interactions = memStore.interactions.filter(i => {
+                const iMonth = new Date(i.timestamp || i.createdAt || Date.now()).toISOString().slice(0, 7);
+                return iMonth !== month;
+            });
+            deletedSessionsCount = sidsToDelete.length;
+
+            if (isMongoConnected) {
+                try {
+                    const [yyyy, mm] = month.split('-');
+                    const startMonth = new Date(Date.UTC(parseInt(yyyy), parseInt(mm) - 1, 1));
+                    const endMonth = new Date(Date.UTC(parseInt(yyyy), parseInt(mm), 0, 23, 59, 59, 999));
+                    await Session.deleteMany({ startTime: { $gte: startMonth, $lte: endMonth } });
+                    await Interaction.deleteMany({ timestamp: { $gte: startMonth, $lte: endMonth } });
+                } catch (e) { }
+            }
+
+            if (supabase) {
+                try {
+                    const [yyyy, mm] = month.split('-');
+                    const startIso = `${yyyy}-${mm}-01T00:00:00Z`;
+                    const lastDay = new Date(parseInt(yyyy), parseInt(mm), 0).getDate();
+                    const endIso = `${yyyy}-${mm}-${lastDay}T23:59:59Z`;
+                    await supabase.from('interactions').delete().gte('timestamp', startIso).lte('timestamp', endIso);
+                    await supabase.from('sessions').delete().gte('start_time', startIso).lte('start_time', endIso);
+                } catch (e) { }
+            }
+        }
+
+        invalidateStorageCache();
+        broadcastEvent('data_deleted', { type, date, month, deletedSessionsCount });
+        res.json({ ok: true, message: `Successfully deleted records (${type})`, deletedSessionsCount });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Daily Grouped Sessions Report for Executive PDF Dossier & Printing
 app.get('/api/dashboard/report/daily', authenticateToken, async (req, res) => {
     try {
