@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "rvce-standalone-dashboard/server.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "rvce-standalone-dashboard/public/**",
+          "rvce-standalone-dashboard/models/**",
+          "rvce-standalone-dashboard/utils/**"
+        ]
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "rvce-standalone-dashboard/server.js",
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "X-Requested-With, Content-Type, Authorization, Origin, Accept",
+        "Content-Security-Policy": "frame-ancestors *"
+      }
+    }
+  ]
+}
+

@@ -2,9 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const fs = require('fs');
 
 // Models
 const Session = require('./models/Session');
@@ -53,12 +54,34 @@ app.use(cors({
     credentials: true
 }));
 
-// Security Headers & Framing Configuration (Allows all 3 WordPress Admin portals to embed iframe)
+// Security Headers & Framing Configuration (Allows all WordPress Admin portals to embed iframe)
 app.use((req, res, next) => {
-    res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://rvce.edu.in https://*.rvce.edu.in http://localhost:* http://127.0.0.1:* https://*.vercel.app");
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    res.setHeader('Content-Security-Policy', "frame-ancestors *");
     res.removeHeader('X-Frame-Options');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
     next();
 });
+
+function serveIndexHtml(res) {
+    res.setHeader('Content-Security-Policy', "frame-ancestors *");
+    res.removeHeader('X-Frame-Options');
+    const candidatePaths = [
+        path.join(__dirname, 'public', 'index.html'),
+        path.join(process.cwd(), 'public', 'index.html'),
+        path.join(process.cwd(), 'rvce-standalone-dashboard', 'public', 'index.html')
+    ];
+    for (const p of candidatePaths) {
+        if (fs.existsSync(p)) {
+            return res.sendFile(p);
+        }
+    }
+    return res.status(200).send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>RVCE Command Center</title></head><body style="background:#0b0f19;color:#fff;font-family:sans-serif;padding:40px;text-align:center;"><h2>RVCE Command Center Backend Online</h2><p>Vercel Serverless instance is operational.</p></body></html>`);
+}
 
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
@@ -66,8 +89,8 @@ app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 // URL normalization middleware for chatbot and legacy integrations
 app.use((req, res, next) => {
     // If requesting the dashboard UI page itself, skip API prefix rewrite
-    if (req.path === '/dashboard' || req.path === '/dashboard/') {
-        return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    if (req.path === '/dashboard' || req.path === '/dashboard/' || req.path === '/') {
+        return serveIndexHtml(res);
     }
     if (!req.url.startsWith('/api') && (
         req.url.startsWith('/logs') ||
@@ -2629,7 +2652,7 @@ seedMemoryStoreIfEmpty();
 
 // SPA Fallback
 app.use((req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    serveIndexHtml(res);
 });
 
 // Start Server

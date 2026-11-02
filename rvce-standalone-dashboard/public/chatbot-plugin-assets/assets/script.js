@@ -4084,9 +4084,9 @@ micB.addEventListener('click', () => {
 });
 
 /* =============== TELEMETRY & QUEUE =============== */
-/* =============== TELEMETRY & QUEUE =============== */
 var currentSessionId = (function() {
     if (typeof window !== 'undefined' && window.rvceSessionId) return window.rvceSessionId;
+    if (typeof window !== 'undefined' && window.rvceGetSessionId) return window.rvceGetSessionId();
     let sid = null;
     try {
         const urlParams = new URLSearchParams(window.location.search);
@@ -4095,12 +4095,18 @@ var currentSessionId = (function() {
         if (!sid && typeof localStorage !== 'undefined') sid = localStorage.getItem('rvce_sid');
     } catch(e) {}
     if (!sid) {
-        sid = 'sess_rvce_' + Math.random().toString(36).substr(2, 9);
         try {
-            if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('rvce_sid', sid);
-            if (typeof localStorage !== 'undefined') localStorage.setItem('rvce_sid', sid);
+            if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                sid = 'sess_rvce_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16) + '_' + Date.now().toString(36);
+            }
         } catch(e) {}
+        if (!sid) sid = 'sess_rvce_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
     }
+    try {
+        if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('rvce_sid', sid);
+        if (typeof localStorage !== 'undefined') localStorage.setItem('rvce_sid', sid);
+    } catch(e) {}
+    if (typeof window !== 'undefined') window.rvceSessionId = sid;
     return sid;
 })();
 
@@ -4184,12 +4190,8 @@ function logChatInteraction(query, intent_id, metadata = {}) {
         localStorage.setItem('rvce_standalone_logs', JSON.stringify(logs));
     } catch(e) { console.warn("Local logging failed", e); }
 
-    // 3. Global Cloud Logging (MongoDB API)
-    const centralBase = (window.rvceChatbotSettings && window.rvceChatbotSettings.vercelUrl)
-        ? window.rvceChatbotSettings.vercelUrl.replace(/\/+$/, '')
-        : ((window.location.hostname === 'localhost' || window.location.protocol === 'file:') 
-            ? 'http://localhost:3000' 
-            : '');
+    // 3. Global Cloud Logging (MongoDB / Vercel API)
+    const centralBase = getCleanCentralBase();
     if (centralBase) {
         try {
             fetch(centralBase + '/api/logs', {
@@ -4207,6 +4209,23 @@ function logChatInteraction(query, intent_id, metadata = {}) {
             }).catch(() => {});
         } catch(e) { /* silent fail */ }
     }
+}
+
+function getCleanCentralBase() {
+    let base = (window.rvceChatbotSettings && window.rvceChatbotSettings.vercelUrl)
+        ? String(window.rvceChatbotSettings.vercelUrl).trim()
+        : '';
+    if (base) {
+        base = base.replace(/\/(dashboard|api)\/?$/, '').replace(/\/+$/, '');
+        if (base.includes('.vercel.app') && base.startsWith('http://')) {
+            base = 'https://' + base.substring(7);
+        }
+        return base;
+    }
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:') {
+        return 'http://localhost:3001';
+    }
+    return '';
 }
 
 function getBrowserName() {
@@ -4249,11 +4268,7 @@ function logMicroInteraction(type, label, metadata = {}) {
     } catch(e) { console.warn("Micro-interaction logging failed", e); }
 
     // Cloud logging
-    const centralBase = (window.rvceChatbotSettings && window.rvceChatbotSettings.vercelUrl)
-        ? window.rvceChatbotSettings.vercelUrl.replace(/\/+$/, '')
-        : ((window.location.hostname === 'localhost' || window.location.protocol === 'file:') 
-            ? 'http://localhost:3000' 
-            : '');
+    const centralBase = getCleanCentralBase();
     if (centralBase) {
         try {
             fetch(centralBase + '/api/logs', {
@@ -4665,7 +4680,8 @@ function addBot(text, buttons, noMenu) {
             
             if(b.u) {
                 const trackFn = b.track ? `trackInteraction('fac_profile_click', '${b.track}');` : '';
-                bh+=`<a class="act-btn lk" href="${b.u}" target="_blank" rel="noopener noreferrer" onclick="${trackFn}">${b.i||'🌐'} ${label} 🌐</a>`;
+                const finalUrl = (typeof window !== 'undefined' && window.rvceDecorateUrl) ? window.rvceDecorateUrl(b.u) : b.u;
+                bh+=`<a class="act-btn lk" href="${finalUrl}" target="_blank" rel="noopener noreferrer" onclick="${trackFn}">${b.i||'🌐'} ${label} 🌐</a>`;
             }
             else bh+=`<button class="act-btn" data-action="${b.a}">${b.i||''} ${label}</button>`;
         });
@@ -4716,7 +4732,8 @@ function addBot(text, buttons, noMenu) {
         if (url.startsWith('http')) icon = '🌐 ';
         else if (url.startsWith('tel:')) icon = '📞 ';
         else if (url.startsWith('mailto:')) icon = '✉️ ';
-        return `<a href="${url}" target="_blank">${icon}${text}</a>`;
+        const finalUrl = (typeof window !== 'undefined' && window.rvceDecorateUrl) ? window.rvceDecorateUrl(url) : url;
+        return `<a href="${finalUrl}" target="_blank">${icon}${text}</a>`;
     });
     fmt = fmt.replace(/\n/g,'<br>');
     
@@ -4857,6 +4874,13 @@ function saveState() {
     SafeStorage.setItem('rvce_chat_tone', tone);
     SafeStorage.setItem('rvce_chat_open', chatOpen ? '1' : '0');
     SafeStorage.setItem('rvce_chat_time', Date.now().toString());
+    const sid = getSID();
+    if (sid) {
+        SafeStorage.setItem('rvce_sid', sid);
+        try {
+            if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('rvce_sid', sid);
+        } catch(e) {}
+    }
 }
 
 const msgObserver = new MutationObserver(() => saveState());
@@ -4872,8 +4896,17 @@ setTimeout(()=>{
         SafeStorage.removeItem('rvce_chat_tone');
         SafeStorage.removeItem('rvce_chat_open');
         SafeStorage.removeItem('rvce_chat_time');
+        SafeStorage.removeItem('rvce_sid');
     } else {
         savedHtml = SafeStorage.getItem('rvce_chat_html');
+        const savedSid = SafeStorage.getItem('rvce_sid');
+        if (savedSid) {
+            currentSessionId = savedSid;
+            if (typeof window !== 'undefined') window.rvceSessionId = savedSid;
+            try {
+                if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('rvce_sid', savedSid);
+            } catch(e) {}
+        }
     }
 
     if (savedHtml) {

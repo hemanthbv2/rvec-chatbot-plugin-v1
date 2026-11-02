@@ -46,17 +46,38 @@ function rvce_chatbot_add_admin_menu() {
 add_action('admin_menu', 'rvce_chatbot_add_admin_menu');
 
 /**
+ * Sanitize and normalize backend / Vercel URL
+ */
+function rvce_chatbot_sanitize_vercel_url($url) {
+    $url = trim($url);
+    if (empty($url)) {
+        return '';
+    }
+    if (strpos($url, '.vercel.app') !== false && strpos($url, 'http://') === 0) {
+        $url = 'https://' . substr($url, 7);
+    }
+    $url = preg_replace('/\/(dashboard|api)\/?$/', '', $url);
+    $url = rtrim($url, '/');
+    return esc_url_raw($url);
+}
+
+/**
+ * Get Clean Vercel / Central Backend Base URL
+ */
+function rvce_chatbot_get_clean_vercel_url() {
+    $url = get_option('rvce_chatbot_vercel_url', '');
+    return rvce_chatbot_sanitize_vercel_url($url);
+}
+
+/**
  * Render the Analytics Dashboard via Secure iframe
  */
 function rvce_chatbot_analytics_dashboard_page() {
-    $vercel_url = get_option('rvce_chatbot_vercel_url', '');
+    $vercel_url = rvce_chatbot_get_clean_vercel_url();
     $mode = isset($_GET['view']) ? sanitize_text_field($_GET['view']) : 'live';
 
     if (!empty($vercel_url) && $mode !== 'local') {
-        $dashboard_url = rtrim($vercel_url, '/');
-        if (!preg_match('/\/(dashboard|index\.html)$/', $dashboard_url)) {
-            $dashboard_url .= '/dashboard';
-        }
+        $dashboard_url = $vercel_url . '/dashboard';
         $is_live = true;
     } else {
         $dashboard_url = admin_url('admin-post.php?action=rvce_chatbot_dashboard_view&tab=index');
@@ -74,6 +95,11 @@ function rvce_chatbot_analytics_dashboard_page() {
                 </span>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
+                <?php if ($is_live) : ?>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot-dashboard&view=local')); ?>" class="button" style="background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); color: #e2e8f0; font-weight: 600;">📁 View Local WP Analytics</a>
+                <?php else : ?>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot-dashboard&view=live')); ?>" class="button" style="background: rgba(99,102,241,0.25); border-color: #6366f1; color: #c7d2fe; font-weight: 600;">⚡ View Central Command Hub</a>
+                <?php endif; ?>
                 <?php if (!empty($vercel_url)) : ?>
                     <a href="<?php echo esc_url($dashboard_url); ?>" target="_blank" class="button" style="background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); color: #fff;">↗ Open Full Screen</a>
                 <?php endif; ?>
@@ -82,7 +108,7 @@ function rvce_chatbot_analytics_dashboard_page() {
         </div>
 
         <!-- Embedded Full Dashboard -->
-        <iframe src="<?php echo esc_url($dashboard_url); ?>" style="width: 100%; height: calc(100vh - 90px); min-height: 850px; border: none;" allow="clipboard-write; clipboard-read"></iframe>
+        <iframe src="<?php echo esc_url($dashboard_url); ?>" style="width: 100%; height: calc(100vh - 90px); min-height: 850px; border: none;" allow="clipboard-write; clipboard-read; cross-origin-isolated" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"></iframe>
     </div>
     <?php
 }
@@ -289,7 +315,7 @@ function rvce_chatbot_register_settings() {
     register_setting('rvce_chatbot_options_group', 'rvce_chatbot_status_text', array('sanitize_callback' => 'sanitize_text_field'));
     register_setting('rvce_chatbot_options_group', 'rvce_chatbot_welcome_text', array('sanitize_callback' => 'sanitize_textarea_field'));
     register_setting('rvce_chatbot_options_group', 'rvce_chatbot_subsite', array('sanitize_callback' => 'sanitize_text_field'));
-    register_setting('rvce_chatbot_options_group', 'rvce_chatbot_vercel_url', array('sanitize_callback' => 'esc_url_raw'));
+    register_setting('rvce_chatbot_options_group', 'rvce_chatbot_vercel_url', array('sanitize_callback' => 'rvce_chatbot_sanitize_vercel_url'));
     register_setting('rvce_chatbot_options_group', 'rvce_chatbot_sheets_url', array('sanitize_callback' => 'esc_url_raw'));
     register_setting('rvce_chatbot_options_group', 'rvce_chatbot_logo_url', array('sanitize_callback' => 'esc_url_raw'));
     register_setting('rvce_chatbot_options_group', 'rvce_chatbot_receiver_email', array('sanitize_callback' => 'sanitize_email'));
@@ -573,7 +599,7 @@ function rvce_chatbot_enqueue_assets() {
             'welcomeText'     => esc_html(get_option('rvce_chatbot_welcome_text', 'Hi there! Have questions about RVCE admissions, placements, or courses? Chat with us!')),
             'googleSheetsUrl' => esc_url_raw(get_option('rvce_chatbot_sheets_url', '')),
             'restUrl'         => esc_url_raw(rest_url('rvce/v1')),
-            'vercelUrl'       => esc_url_raw(get_option('rvce_chatbot_vercel_url', 'http://localhost:3001')),
+            'vercelUrl'       => esc_url_raw(rvce_chatbot_get_clean_vercel_url() ?: get_option('rvce_chatbot_vercel_url', 'http://localhost:3001')),
             'subsite'         => sanitize_text_field(get_option('rvce_chatbot_subsite', 'auto')),
             'ajaxUrl'         => admin_url('admin-ajax.php'),
             'nonce'           => wp_create_nonce('rvce_chatbot_nonce')
@@ -615,7 +641,7 @@ function rvce_chatbot_render_footer_html() {
     window.rvceChatbotSettings.title = <?php echo json_encode($title); ?>;
     window.rvceChatbotSettings.statusText = <?php echo json_encode($status_text); ?>;
     window.rvceChatbotSettings.restUrl = <?php echo json_encode(rest_url('rvce/v1')); ?>;
-    window.rvceChatbotSettings.vercelUrl = <?php echo json_encode(get_option('rvce_chatbot_vercel_url', 'http://localhost:3001')); ?>;
+    window.rvceChatbotSettings.vercelUrl = <?php echo json_encode(rvce_chatbot_get_clean_vercel_url() ?: get_option('rvce_chatbot_vercel_url', 'http://localhost:3001')); ?>;
     window.rvceChatbotSettings.subsite = <?php echo json_encode(get_option('rvce_chatbot_subsite', 'auto')); ?>;
     </script>
     <!-- RVCE Chatbot Root Container -->

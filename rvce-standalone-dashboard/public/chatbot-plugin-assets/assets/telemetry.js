@@ -31,7 +31,7 @@
     }
 
     // Session continuity with 30-minute rolling timeout
-        // Cross-Domain & Multi-Subportal Session Engine
+    // Cross-Domain & Multi-Subportal Session Engine
     const SESSION_STORAGE_KEY = 'rvce_telemetry_session';
     const SESSION_COOKIE_NAME = 'rvce_sid';
     const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -67,6 +67,31 @@
         } catch (e) {}
     }
 
+    function generateSecureSessionId() {
+        try {
+            if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+                return 'sess_rvce_' + crypto.randomUUID().replace(/-/g, '').substring(0, 16) + '_' + Date.now().toString(36);
+            }
+        } catch (e) {}
+        return 'sess_rvce_' + Math.random().toString(36).substr(2, 9) + Math.random().toString(36).substr(2, 9) + '_' + Date.now().toString(36);
+    }
+
+    function syncStorage(sid) {
+        if (!sid) return;
+        writeCookie(SESSION_COOKIE_NAME, sid);
+        try {
+            if (typeof window !== 'undefined') {
+                if (window.sessionStorage) {
+                    window.sessionStorage.setItem('rvce_sid', sid);
+                    window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ id: sid, lastActive: Date.now() }));
+                }
+                if (window.localStorage) {
+                    window.localStorage.setItem('rvce_sid', sid);
+                }
+            }
+        } catch (e) {}
+    }
+
     function getOrCreateSessionId() {
         let sid = null;
 
@@ -75,11 +100,14 @@
             const urlParams = new URLSearchParams(window.location.search);
             sid = urlParams.get('rvce_sid') || urlParams.get('sid');
             if (sid && /^sess_[a-zA-Z0-9_-]+$/.test(sid)) {
-                writeCookie(SESSION_COOKIE_NAME, sid);
-                try {
-                    window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ id: sid, lastActive: Date.now() }));
-                    window.localStorage.setItem('rvce_sid', sid);
-                } catch (e) {}
+                syncStorage(sid);
+                // Clean up address bar quietly so URL remains clean
+                if (window.history && window.history.replaceState) {
+                    urlParams.delete('rvce_sid');
+                    urlParams.delete('sid');
+                    const cleanQuery = urlParams.toString() ? '?' + urlParams.toString() : '';
+                    window.history.replaceState(null, '', window.location.pathname + cleanQuery + window.location.hash);
+                }
                 return sid;
             }
         } catch (e) {}
@@ -88,10 +116,7 @@
         const cookieSid = readCookie(SESSION_COOKIE_NAME);
         if (cookieSid && /^sess_[a-zA-Z0-9_-]+$/.test(cookieSid)) {
             sid = cookieSid;
-            try {
-                window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ id: sid, lastActive: Date.now() }));
-                window.localStorage.setItem('rvce_sid', sid);
-            } catch (e) {}
+            syncStorage(sid);
             return sid;
         }
 
@@ -104,45 +129,36 @@
                         const parsed = JSON.parse(raw);
                         if (parsed && parsed.id && (Date.now() - (parsed.lastActive || 0) < SESSION_TIMEOUT_MS)) {
                             parsed.lastActive = Date.now();
-                            window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(parsed));
-                            writeCookie(SESSION_COOKIE_NAME, parsed.id);
-                            return parsed.id;
+                            sid = parsed.id;
+                            syncStorage(sid);
+                            return sid;
                         }
+                    }
+                    const sessSid = window.sessionStorage.getItem('rvce_sid');
+                    if (sessSid && /^sess_[a-zA-Z0-9_-]+$/.test(sessSid)) {
+                        sid = sessSid;
+                        syncStorage(sid);
+                        return sid;
                     }
                 }
                 const localSid = window.localStorage.getItem('rvce_sid');
                 if (localSid && /^sess_[a-zA-Z0-9_-]+$/.test(localSid)) {
-                    writeCookie(SESSION_COOKIE_NAME, localSid);
-                    return localSid;
+                    sid = localSid;
+                    syncStorage(sid);
+                    return sid;
                 }
             }
         } catch (e) {}
 
-        // 4. Generate new resilient session ID
-        const newId = 'sess_rvce_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-        writeCookie(SESSION_COOKIE_NAME, newId);
-        try {
-            if (window.sessionStorage) {
-                window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ id: newId, lastActive: Date.now() }));
-            }
-            if (window.localStorage) {
-                window.localStorage.setItem('rvce_sid', newId);
-            }
-        } catch (e) {}
+        // 4. Generate new collision-proof session ID for 1,000+ concurrent visitors
+        const newId = generateSecureSessionId();
+        syncStorage(newId);
         return newId;
     }
 
     function touchSession() {
         try {
-            writeCookie(SESSION_COOKIE_NAME, SESSION_ID);
-            if (typeof window !== 'undefined' && window.sessionStorage) {
-                const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
-                if (raw) {
-                    const parsed = JSON.parse(raw);
-                    parsed.lastActive = Date.now();
-                    window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(parsed));
-                }
-            }
+            syncStorage(SESSION_ID);
         } catch(e) {}
     }
 
@@ -156,9 +172,15 @@
         const wpRestUrl = (window.rvceChatbotSettings && window.rvceChatbotSettings.restUrl)
             ? window.rvceChatbotSettings.restUrl.replace(/\/$/, '')
             : '';
-        const vercelUrl = (window.rvceChatbotSettings && window.rvceChatbotSettings.vercelUrl)
-            ? window.rvceChatbotSettings.vercelUrl.replace(/\/$/, '')
+        let vercelUrl = (window.rvceChatbotSettings && window.rvceChatbotSettings.vercelUrl)
+            ? String(window.rvceChatbotSettings.vercelUrl).trim()
             : '';
+        if (vercelUrl) {
+            vercelUrl = vercelUrl.replace(/\/(dashboard|api)\/?$/, '').replace(/\/+$/, '');
+            if (vercelUrl.includes('.vercel.app') && vercelUrl.startsWith('http://')) {
+                vercelUrl = 'https://' + vercelUrl.substring(7);
+            }
+        }
         return { wpRestUrl, vercelUrl };
     }
 
@@ -372,12 +394,11 @@
             );
         }
 
-        // 2. Central Backend API (Node.js Express / MongoDB Atlas -> Server dual-writes to Supabase)
-        const centralBase = vercelUrl || (
-            (window.location.protocol === 'http:' || window.location.protocol === 'https:')
-                ? window.location.origin
-                : 'http://localhost:3001'
-        );
+        // 2. Central Backend API (Node.js Express / Vercel -> Dual writes to Supabase)
+        let centralBase = vercelUrl;
+        if (!centralBase && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+            centralBase = 'http://localhost:3001';
+        }
 
         let centralSuccess = false;
         if (centralBase) {
@@ -478,11 +499,10 @@
         telemetryQueue = [];
         const { vercelUrl } = getEndpoints();
         const subsite = getSubsite();
-        const centralBase = vercelUrl || (
-            (window.location.protocol === 'http:' || window.location.protocol === 'https:')
-                ? window.location.origin
-                : 'http://localhost:3001'
-        );
+        let centralBase = vercelUrl;
+        if (!centralBase && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+            centralBase = 'http://localhost:3001';
+        }
         const payload = JSON.stringify({
             institute_id: 'rvce',
             instituteId: 'rvce',
@@ -523,17 +543,25 @@
     window.rvceGetSessionId = function() { return SESSION_ID; };
 
     // Automatic Cross-Portal Link Decoration for seamless session handoff
+    function decorateRvceUrl(rawUrl) {
+        if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
+        try {
+            const targetUrl = new URL(rawUrl, window.location.href);
+            const isRvceDomain = targetUrl.hostname.endsWith('rvce.edu.in') || targetUrl.hostname === 'rvce.edu.in' || targetUrl.hostname.includes('localhost') || targetUrl.hostname.includes('127.0.0.1');
+            if (isRvceDomain && !targetUrl.searchParams.has('rvce_sid')) {
+                targetUrl.searchParams.set('rvce_sid', SESSION_ID);
+                return targetUrl.toString();
+            }
+        } catch(e) {}
+        return rawUrl;
+    }
+    window.rvceDecorateUrl = decorateRvceUrl;
+
     document.addEventListener('click', (e) => {
         const link = e.target.closest('a');
         if (!link || !link.href) return;
         try {
-            const targetUrl = new URL(link.href, window.location.href);
-            const isRvce = targetUrl.hostname.includes('rvce.edu.in') || (targetUrl.hostname === window.location.hostname);
-            const isDifferentHostOrSubsite = targetUrl.hostname !== window.location.hostname;
-            if (isRvce && isDifferentHostOrSubsite && !targetUrl.searchParams.has('rvce_sid')) {
-                targetUrl.searchParams.set('rvce_sid', SESSION_ID);
-                link.href = targetUrl.toString();
-            }
+            link.href = decorateRvceUrl(link.href);
         } catch (linkErr) {}
     }, true);
 
