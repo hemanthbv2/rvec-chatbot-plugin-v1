@@ -1,11 +1,12 @@
-require('dotenv').config();
+const path = require('path');
+const fs = require('fs');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const path = require('path');
-const fs = require('fs');
 
 // Models
 const Session = require('./models/Session');
@@ -333,6 +334,7 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
         else if (rawReferrer.includes('linkedin')) referrerType = 'LinkedIn';
         let utmParams = firstMeta.utm || {};
         const batchSubsites = new Set([requestSubsite]);
+        let memSession = memStore.sessions.get(sessionId);
 
         for (let e of events) {
             const eventSubsite = String(e.subsite || e.data?.subsite || e.metaData?.subsite || requestSubsite || 'main').toLowerCase();
@@ -343,13 +345,15 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
             const pagePath = e.pagePath || meta.pagePath || (pageUrl ? new URL(pageUrl, 'https://rvce.edu.in').pathname : '/');
             const pageTitle = e.pageTitle || meta.pageTitle || 'RV College of Engineering';
             const queryText = e.queryText || meta.query || meta.message || e.q || '';
-            const botReply = e.botReply || meta.botReply || '';
-            const linkUrl = e.linkUrl || meta.linkUrl || meta.targetUrl || '';
-            const linkText = e.linkText || meta.linkText || '';
+            const botReply = e.botReply || meta.botReply || meta.reply || '';
+            const linkUrl = e.linkUrl || meta.linkUrl || meta.targetUrl || meta.url || '';
+            const linkText = e.linkText || meta.linkText || (eventType === 'link_click' ? meta.text || meta.label || '' : '');
             const targetUrl = e.targetUrl || meta.targetUrl || linkUrl || '';
-            const buttonText = e.buttonText || meta.buttonText || '';
-            const location = e.location || meta.location || (eventType === 'message' ? 'Chatbot' : 'Webpage');
-            const interactionId = e.interactionId || e.i || eventType;
+            const rawBtn = e.buttonText || meta.buttonText || meta.elementText || (eventType === 'button_click' || eventType === 'click' ? meta.label || meta.text || e.label || '' : '');
+            const cleanBtn = String(rawBtn).replace(/^Button:\s*/i, '').replace(/^Chip:\s*/i, '').trim();
+            const buttonText = cleanBtn;
+            const location = e.location || meta.location || (eventType === 'message' || eventType === 'bot_open' ? 'Chatbot' : 'Webpage');
+            const interactionId = e.interactionId || e.i || meta.intent || meta.intentId || meta.interactionId || (eventType !== 'message' ? eventType : (queryText ? 'general' : 'dialogue'));
 
             if (pageUrl) { currentExitPage = pageUrl; currentExitPath = pagePath; }
             if (meta.exitPage) { currentExitPage = meta.exitPage; currentExitPath = meta.exitPath || currentExitPath; }
@@ -364,23 +368,27 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
             // --- Construct Granular Journey Step ---
             let stepType = eventType;
             let stepTitle = 'Action';
-            let stepDetail = queryText || buttonText || linkText || interactionId;
+            let stepDetail = queryText || cleanBtn || linkText || interactionId;
 
-            if (eventType === 'page_visit') {
+            if (eventType === 'page_visit' || eventType === 'page_load') {
                 stepType = 'page_land';
                 stepTitle = `Landed on ${pagePath}`;
                 stepDetail = `Entry from ${referrerType}`;
-            } else if (eventType === 'bot_open') {
+            } else if (eventType === 'bot_open' || eventType === 'chat_open') {
                 stepType = 'bot_open';
                 stepTitle = 'Opened Chatbot Widget';
                 stepDetail = `Triggered on ${pagePath}`;
+            } else if (eventType === 'bot_close' || eventType === 'chat_close' || eventType === 'chat_end') {
+                stepType = 'bot_close';
+                stepTitle = 'Closed Chat Window';
+                stepDetail = 'Visitor closed chatbot widget';
             } else if (eventType === 'message') {
                 stepType = 'query';
                 stepTitle = `Asked: "${queryText}"`;
                 stepDetail = botReply ? `Bot: "${botReply.substring(0, 75)}..."` : `Intent: ${interactionId}`;
-            } else if (eventType === 'button_click') {
+            } else if (eventType === 'button_click' || eventType === 'click') {
                 stepType = 'button_click';
-                stepTitle = `Clicked Button: "${buttonText}"`;
+                stepTitle = `Clicked Button: "${cleanBtn || 'Chatbot Button'}"`;
                 stepDetail = `Location: ${location} (${pagePath})`;
             } else if (eventType === 'link_click') {
                 stepType = 'link_click';
@@ -398,34 +406,60 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                 stepType = 'rage_click';
                 stepTitle = `⚡ Rage Click on ${meta.elementTag || 'Button'}`;
                 stepDetail = `Rapid repeated clicks on "${meta.elementText || interactionId}"`;
+            } else if (eventType === 'dead_click') {
+                stepType = 'dead_click';
+                stepTitle = 'Dead Click Detected';
+                stepDetail = `Clicked unlinked static text "${meta.elementText || ''}"`;
+            } else if (eventType === 'typing_hesitation') {
+                stepType = 'typing_hesitation';
+                stepTitle = 'Typing Hesitation';
+                stepDetail = meta.detail || 'Visitor typed question draft and erased without sending';
+            } else if (eventType === 'bot_fallback') {
+                stepType = 'bot_fallback';
+                stepTitle = 'Bot Fallback / Confusion';
+                stepDetail = meta.detail || `Unanswered query: "${queryText}"`;
             } else if (eventType === 'copy') {
                 stepType = 'copy';
                 stepTitle = `Copied Text`;
                 stepDetail = `"${meta.copiedText || queryText}"`;
+            } else if (eventType === 'dwell') {
+                stepType = 'dwell';
+                stepTitle = 'Chat Active Dwell';
+                stepDetail = `Chat open for ${meta.seconds || ''}s`;
             } else if (eventType === 'form_submit') {
                 stepType = 'lead_submit';
                 stepTitle = `Submitted Application Lead`;
                 stepDetail = `Candidate shared contact details`;
-            } else if (eventType === 'page_leave') {
+            } else if (eventType === 'page_leave' || eventType === 'session') {
                 stepType = 'exit';
                 stepTitle = `Exited Site`;
                 stepDetail = `Last viewed page: ${pagePath}`;
             }
 
+            const existingJourneyLen = memSession ? (memSession.journey || []).length : 0;
+            const currentStepNum = existingJourneyLen + journeySteps.length + 1;
+            const eventTimestamp = new Date(e.timestamp || Date.now());
+            const sessionStartTime = memSession ? new Date(memSession.startTime || eventTimestamp) : eventTimestamp;
+            const offsetSec = Math.max(0, Math.round((eventTimestamp.getTime() - sessionStartTime.getTime()) / 1000));
+            const oMins = Math.floor(offsetSec / 60);
+            const oSecs = offsetSec % 60;
+            const formattedOffset = `+${oMins.toString().padStart(2, '0')}:${oSecs.toString().padStart(2, '0')}`;
+
             journeySteps.push({
-                step: e.stepIndex || (journeySteps.length + 1),
+                step: currentStepNum,
                 subsite: eventSubsite,
                 type: stepType,
                 title: stepTitle,
                 detail: stepDetail,
                 url: pageUrl,
                 targetUrl: targetUrl || linkUrl,
-                elementText: buttonText || linkText || queryText,
+                elementText: cleanBtn || buttonText || linkText || queryText,
                 elementId: meta.elementId || '',
                 location: location,
                 botReply: botReply,
                 isExternal: !!meta.isExternal,
-                timestamp: new Date(e.timestamp || Date.now())
+                timeOffset: formattedOffset,
+                timestamp: eventTimestamp
             });
 
             // Capture Dialogue
@@ -489,12 +523,13 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                 memStore.leads.set(leadDoc._id, leadDoc);
             }
 
+            const normalizedEventType = (eventType === 'click' ? 'button_click' : (eventType === 'page_load' ? 'page_land' : eventType));
             const interactionDoc = {
                 _id: 'int_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
                 sessionId: sessionId,
                 instituteId: 'rvce',
                 stepIndex: e.stepIndex || 1,
-                eventType: eventType,
+                eventType: normalizedEventType,
                 interactionId: interactionId,
                 queryText: queryText,
                 botReply: botReply,
@@ -508,7 +543,7 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                 isExternal: !!meta.isExternal,
                 buttonText: buttonText,
                 location: location,
-                isUnanswered: (interactionId === 'unmatched'),
+                isUnanswered: (interactionId === 'unmatched' || meta.intent === 'unmatched' || meta.isUnanswered === true),
                 element: {
                     tag: meta.elementTag || '',
                     id: meta.elementId || '',
@@ -565,12 +600,14 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
         const lastIntent = interactionDocs[interactionDocs.length - 1]?.interactionId || '';
 
         // Memory Store Session Update
-        let memSession = memStore.sessions.get(sessionId);
+        if (!memSession) {
+            memSession = memStore.sessions.get(sessionId);
+        }
         if (!memSession) {
             memSession = {
                 sessionId: sessionId,
                 instituteId: 'rvce',
-                startTime: new Date(),
+                startTime: new Date(events[0]?.timestamp || Date.now()),
                 lastActive: new Date(),
                 landingPage: landingPage,
                 entryPage: landingPage,
@@ -587,6 +624,7 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                 subsitesTouched: [requestSubsite],
                 visitorType: visitorType,
                 chatEngagement: 'browsed_only',
+                botOpenedOnPage: botOpenedOnPage || '',
                 metrics: {
                     eventCount: 0,
                     messageCount: 0,
@@ -609,9 +647,18 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
         }
 
         // Determine Chat Engagement State
-        const hasMessages = (memSession.dialogue && memSession.dialogue.length > 0) || interactionDocs.some(i => i.eventType === 'message');
-        const hasOpenedBot = interactionDocs.some(i => i.eventType === 'bot_open' || i.location === 'Chatbot') || memSession.journey.some(j => j.location === 'Chatbot' || j.type === 'bot_open');
-        memSession.chatEngagement = hasMessages ? 'conversed' : (hasOpenedBot ? 'opened_only' : 'browsed_only');
+        const hasMessages = (memSession.dialogue && memSession.dialogue.length > 0) || dialogueItems.length > 0 || interactionDocs.some(i => i.eventType === 'message');
+        const hasOpenedBot = !!botOpenedOnPage || !!memSession.botOpenedOnPage ||
+            interactionDocs.some(i => i.eventType === 'bot_open' || i.eventType === 'chat_open' || (i.location === 'Chatbot' && i.eventType !== 'page_visit' && i.eventType !== 'page_load')) ||
+            (memSession.journey && memSession.journey.some(j => j.location === 'Chatbot' || j.type === 'bot_open'));
+
+        if (hasMessages || memSession.chatEngagement === 'conversed') {
+            memSession.chatEngagement = 'conversed';
+        } else if (hasOpenedBot || memSession.chatEngagement === 'opened_only') {
+            memSession.chatEngagement = 'opened_only';
+        } else {
+            memSession.chatEngagement = 'browsed_only';
+        }
         memSession.isBot = isBot;
         memSession.botName = botName;
         memSession.botCategory = botCategory;
@@ -619,8 +666,6 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
 
         if (botOpenedOnPage) {
             memSession.botOpenedOnPage = botOpenedOnPage;
-        } else if (!memSession.botOpenedOnPage) {
-            memSession.botOpenedOnPage = landingPage;
         }
         if (!memSession.subsitesTouched) {
             memSession.subsitesTouched = Array.from(batchSubsites);
@@ -630,9 +675,8 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
             });
         }
         memSession.lastActive = new Date();
-        memSession.lastIntent = lastIntent;
+        memSession.lastIntent = lastIntent || memSession.lastIntent || '';
         if (currentExitPage) memSession.exitPage = currentExitPage;
-        if (botOpenedOnPage) memSession.botOpenedOnPage = botOpenedOnPage;
         memSession.metrics.eventCount += interactionDocs.length;
         memSession.metrics.messageCount += interactionDocs.filter(i => i.eventType === 'message').length;
         memSession.metrics.clickCount += interactionDocs.filter(i => i.eventType.includes('click')).length;
@@ -664,7 +708,7 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                         $setOnInsert: {
                             sessionId: sessionId,
                             instituteId: 'rvce',
-                            startTime: new Date(),
+                            startTime: memSession.startTime || new Date(),
                             landingPage: landingPage,
                             entryPage: landingPage,
                             referrer: referrerType,
@@ -679,14 +723,14 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                         },
                         $set: {
                             lastActive: new Date(),
-                            lastIntent: lastIntent,
+                            lastIntent: lastIntent || memSession.lastIntent || '',
                             chatEngagement: memSession.chatEngagement,
                             isBot: isBot,
                             visitorType: visitorType,
                             botName: botName,
                             botCategory: botCategory,
                             ...(currentExitPage ? { exitPage: currentExitPage } : {}),
-                            ...(botOpenedOnPage ? { botOpenedOnPage: botOpenedOnPage } : {})
+                            ...(memSession.botOpenedOnPage ? { botOpenedOnPage: memSession.botOpenedOnPage } : {})
                         },
                         $inc: {
                             'metrics.eventCount': interactionDocs.length,
@@ -730,6 +774,7 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                         page_url: i.pageUrl || '',
                         page_path: i.pagePath || '',
                         element: i.element || {},
+                        is_unanswered: !!i.isUnanswered,
                         metadata: {
                             ...i.metaData,
                             linkUrl: i.linkUrl,
@@ -739,7 +784,8 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                         },
                         created_at: i.createdAt
                     }));
-                    await supabase.from('interactions').insert(mappedInts);
+                    const { error: intErr } = await supabase.from('interactions').insert(mappedInts);
+                    if (intErr) console.warn('Supabase interactions insert note:', intErr.message);
                 }
 
                 if (leadDocs.length > 0) {
@@ -756,18 +802,19 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                         device: l.device || {},
                         created_at: l.createdAt
                     }));
-                    await supabase.from('leads').insert(mappedLeads);
+                    const { error: leadErr } = await supabase.from('leads').insert(mappedLeads);
+                    if (leadErr) console.warn('Supabase leads insert note:', leadErr.message);
                 }
 
                 const cumulativeBotOpen = memSession.botOpenedOnPage || botOpenedOnPage || '';
-                await supabase.from('sessions').upsert({
+                const { error: sessErr } = await supabase.from('sessions').upsert({
                     session_id: sessionId,
                     institute_id: 'rvce',
                     landing_page: landingPage,
                     entry_page: landingPage,
                     exit_page: currentExitPage || landingPage,
                     referrer: referrerType,
-                    bot_opened_page: cumulativeBotOpen || undefined,
+                    referrer_domain: rawReferrer ? (new URL(rawReferrer, 'https://rvce.edu.in').hostname) : 'direct',
                     utm: utmParams,
                     geo: geoInfo,
                     device: deviceInfo,
@@ -781,8 +828,16 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                         ...(cumulativeBotOpen ? { bot_opened_on_page: cumulativeBotOpen } : {})
                     },
                     dialogue: memSession.dialogue || dialogueItems,
+                    sentiment: memSession.sentiment || 'Neutral',
+                    last_intent: lastIntent || memSession.lastIntent || '',
+                    is_converted_lead: !!memSession.isConvertedLead,
+                    lead_summary: memSession.leadSummary || {},
+                    start_time: memSession.startTime || new Date(),
                     last_active: new Date()
                 }, { onConflict: 'session_id' });
+                if (sessErr) {
+                    console.warn('Supabase session upsert note:', sessErr.message);
+                }
             } catch (supaErr) {
                 console.warn('Supabase dual-sync note:', supaErr.message);
             }
@@ -855,7 +910,7 @@ let cachedUnifiedSessions = null;
 let lastSessionCacheTime = 0;
 let cachedUnifiedInteractions = null;
 let lastInteractionCacheTime = 0;
-const CACHE_TTL_MS = 60000;
+const CACHE_TTL_MS = 5000;
 
 function invalidateStorageCache() {
     cachedUnifiedSessions = null;
@@ -881,47 +936,59 @@ async function getUnifiedSessions(forceRefresh = false) {
                 .order('last_active', { ascending: false })
                 .limit(500);
             if (!error && data && data.length > 0) {
-                sessions = data.map(s => ({
-                    sessionId: s.session_id,
-                    instituteId: s.institute_id || 'rvce',
-                    landingPage: s.landing_page || '/',
-                    entryPage: s.entry_page || '/',
-                    exitPage: s.exit_page || s.entry_page || '/',
-                    pageHistory: s.page_history || [],
-                    referrer: s.referrer || 'Direct',
-                    referrerDomain: s.referrer_domain || 'direct',
-                    utm: s.utm || {},
-                    geo: s.geo || {},
-                    device: s.device || {},
-                    metrics: {
-                        eventCount: (memStore.sessions.get(s.session_id)?.metrics?.eventCount) || s.metrics?.eventCount || s.metrics?.event_count || 0,
-                        messageCount: (memStore.sessions.get(s.session_id)?.metrics?.messageCount) || s.metrics?.messageCount || s.metrics?.message_count || (s.dialogue ? s.dialogue.filter(d => d.sender === 'user').length : 0),
-                        clickCount: (memStore.sessions.get(s.session_id)?.metrics?.clickCount) || s.metrics?.clickCount || s.metrics?.click_count || 0,
-                        linksClicked: (memStore.sessions.get(s.session_id)?.metrics?.linksClicked) || s.metrics?.linksClicked || s.metrics?.links_clicked || 0,
-                        rageClicks: (memStore.sessions.get(s.session_id)?.metrics?.rageClicks) || s.metrics?.rageClicks || s.metrics?.rage_clicks || 0,
-                        deadClicks: (memStore.sessions.get(s.session_id)?.metrics?.deadClicks) || s.metrics?.deadClicks || s.metrics?.dead_clicks || 0,
-                        hesitationCount: s.metrics?.hesitationCount || s.metrics?.typingHesitations || 0,
-                        botFallbacks: s.metrics?.botFallbacks || 0,
-                        copiedCount: s.metrics?.copiedCount || 0,
-                        frustrationScore: s.metrics?.frustrationScore || s.metrics?.frustration_score || 0
-                    },
-                    dialogue: s.dialogue || [],
-                    subsite: (memStore.sessions.get(s.session_id)?.subsite) || s.subsite || 'main',
-                    subsitesTouched: (memStore.sessions.get(s.session_id)?.subsitesTouched) || s.subsites_touched || [s.subsite || 'main'],
-                    botOpenedOnPage: (memStore.sessions.get(s.session_id)?.botOpenedOnPage) || s.botOpenedOnPage || s.bot_opened_page || s.bot_opened_on_page || s.metrics?.bot_opened_on_page || s.metrics?.botOpenedOnPage || (s.entry_page ? (s.entry_page.startsWith('http') ? new URL(s.entry_page).pathname : s.entry_page) : '') || (s.landing_page ? (s.landing_page.startsWith('http') ? new URL(s.landing_page).pathname : s.landing_page) : '') || '/',
-                    sentiment: s.sentiment || 'Neutral',
-                    lastIntent: s.last_intent || '',
-                    isConvertedLead: !!s.is_converted_lead,
-                    leadSummary: s.lead_summary || {},
-                    isBot: !!(s.device && s.device.isBot) || s.visitorType === 'bot',
-                    botName: s.device?.botName || '',
-                    botCategory: s.device?.botCategory || '',
-                    visitorType: (s.device && s.device.isBot) ? 'bot' : (s.visitorType || 'user'),
-                    chatEngagement: (s.dialogue && s.dialogue.length > 0) ? 'conversed' : 'browsed_only',
-                    startTime: s.start_time || s.created_at,
-                    lastActive: s.last_active || s.created_at,
-                    createdAt: s.created_at
-                }));
+                sessions = data.map(s => {
+                    const memS = memStore.sessions.get(s.session_id);
+                    const botOpen = (memS?.botOpenedOnPage) || s.metrics?.bot_opened_on_page || s.metrics?.botOpenedOnPage || s.botOpenedOnPage || '';
+                    const dialogue = (memS && memS.dialogue && memS.dialogue.length > 0) ? memS.dialogue : (s.dialogue || []);
+                    const journey = (memS && memS.journey && memS.journey.length > 0) ? memS.journey : [];
+                    const isBot = !!(s.device && s.device.isBot) || s.visitorType === 'bot' || !!memS?.isBot;
+                    const hasMessages = dialogue.length > 0 || (s.metrics?.message_count > 0) || (memS?.metrics?.messageCount > 0);
+                    const hasOpened = !!botOpen || (journey.some(j => j.location === 'Chatbot' || j.type === 'bot_open'));
+                    const chatEngagement = hasMessages ? 'conversed' : (hasOpened ? 'opened_only' : 'browsed_only');
+
+                    return {
+                        sessionId: s.session_id,
+                        instituteId: s.institute_id || 'rvce',
+                        landingPage: s.landing_page || '/',
+                        entryPage: s.entry_page || '/',
+                        exitPage: s.exit_page || s.entry_page || '/',
+                        pageHistory: s.page_history || [],
+                        referrer: s.referrer || 'Direct',
+                        referrerDomain: s.referrer_domain || 'direct',
+                        utm: s.utm || {},
+                        geo: s.geo || {},
+                        device: s.device || {},
+                        metrics: {
+                            eventCount: memS?.metrics?.eventCount || s.metrics?.eventCount || s.metrics?.event_count || 0,
+                            messageCount: memS?.metrics?.messageCount || s.metrics?.messageCount || s.metrics?.message_count || (dialogue.filter(d => d.sender === 'user').length),
+                            clickCount: memS?.metrics?.clickCount || s.metrics?.clickCount || s.metrics?.click_count || 0,
+                            linksClicked: memS?.metrics?.linksClicked || s.metrics?.linksClicked || s.metrics?.links_clicked || 0,
+                            rageClicks: memS?.metrics?.rageClicks || s.metrics?.rageClicks || s.metrics?.rage_clicks || 0,
+                            deadClicks: memS?.metrics?.deadClicks || s.metrics?.deadClicks || s.metrics?.dead_clicks || 0,
+                            hesitationCount: memS?.metrics?.hesitationCount || s.metrics?.hesitationCount || s.metrics?.typingHesitations || 0,
+                            botFallbacks: memS?.metrics?.botFallbacks || s.metrics?.botFallbacks || 0,
+                            copiedCount: memS?.metrics?.copiedCount || s.metrics?.copiedCount || 0,
+                            frustrationScore: memS?.metrics?.frustrationScore || s.metrics?.frustrationScore || s.metrics?.frustration_score || 0
+                        },
+                        dialogue: dialogue,
+                        journey: journey,
+                        subsite: memS?.subsite || s.subsite || 'main',
+                        subsitesTouched: memS?.subsitesTouched || s.subsites_touched || [s.subsite || 'main'],
+                        botOpenedOnPage: botOpen,
+                        sentiment: s.sentiment || 'Neutral',
+                        lastIntent: memS?.lastIntent || s.last_intent || '',
+                        isConvertedLead: !!s.is_converted_lead || !!memS?.isConvertedLead,
+                        leadSummary: memS?.leadSummary || s.lead_summary || {},
+                        isBot: isBot,
+                        botName: s.device?.botName || memS?.botName || '',
+                        botCategory: s.device?.botCategory || memS?.botCategory || '',
+                        visitorType: isBot ? 'bot' : 'user',
+                        chatEngagement: chatEngagement,
+                        startTime: s.start_time || s.created_at,
+                        lastActive: memS?.lastActive || s.last_active || s.created_at,
+                        createdAt: s.created_at
+                    };
+                });
             }
         } catch (supaErr) {
             console.warn('Supabase getUnifiedSessions note:', supaErr.message);
@@ -1045,7 +1112,7 @@ async function getUnifiedInteractions(sessionIds = null) {
 function filterSessionBySegment(s, segment) {
     const isBot = !!s.isBot || s.visitorType === 'bot' || (s.device && s.device.isBot);
     const hasMessages = (s.dialogue && s.dialogue.length > 0) || (s.metrics?.messageCount > 0) || s.chatEngagement === 'conversed';
-    const hasOpenedBot = s.chatEngagement === 'opened_only' || (s.journey && s.journey.some(j => j.location === 'Chatbot' || j.type === 'bot_open'));
+    const hasOpenedBot = s.chatEngagement === 'opened_only' || !!s.botOpenedOnPage || !!(s.metrics?.bot_opened_on_page) || (s.journey && s.journey.some(j => j.location === 'Chatbot' || j.type === 'bot_open'));
 
     if (segment === 'bots') return isBot;
     if (segment === 'users') return !isBot;
@@ -1070,7 +1137,7 @@ app.get('/api/dashboard/overview', authenticateToken, async (req, res) => {
         allSessions.forEach(s => {
             const isBot = !!s.isBot || s.visitorType === 'bot' || (s.device && s.device.isBot);
             const hasMessages = (s.dialogue && s.dialogue.length > 0) || (s.metrics?.messageCount > 0) || s.chatEngagement === 'conversed';
-            const hasOpenedBot = s.chatEngagement === 'opened_only' || (s.journey && s.journey.some(j => j.location === 'Chatbot' || j.type === 'bot_open'));
+            const hasOpenedBot = s.chatEngagement === 'opened_only' || !!s.botOpenedOnPage || !!(s.metrics?.bot_opened_on_page) || (s.journey && s.journey.some(j => j.location === 'Chatbot' || j.type === 'bot_open'));
 
             if (isBot) {
                 countBots++;
@@ -1455,10 +1522,7 @@ app.get('/api/dashboard/sessions', authenticateToken, async (req, res) => {
             if (!lastQuery && userMsgs.length > 0) {
                 lastQuery = userMsgs[userMsgs.length - 1].queryText || userMsgs[userMsgs.length - 1].interactionId;
             }
-            if (!lastQuery && pageLoads.length > 0) {
-                lastQuery = pageLoads[0].metaData?.title || 'Browsed Admissions Portal';
-            }
-            if (!lastQuery) lastQuery = 'Browsed Admissions Portal';
+            lastQuery = (lastQuery || '').trim();
 
             const firstPage = pageLoads[0];
             const cleanPath = (u) => {
@@ -1556,19 +1620,28 @@ app.get('/api/dashboard/session/:id', authenticateToken, async (req, res) => {
 
                     const { data: supaInts } = await supabase.from('interactions').select('*').eq('session_id', id).order('created_at', { ascending: true });
                     if (supaInts && supaInts.length > 0) {
-                        interactions = supaInts.map(i => ({
-                            _id: i.id,
-                            sessionId: i.session_id,
-                            eventType: i.event_type,
-                            interactionId: i.interaction_id || '',
-                            queryText: i.query_text || '',
-                            botReply: i.bot_reply || '',
-                            pageUrl: i.page_url || '',
-                            pagePath: i.page_path || '',
-                            element: i.element || {},
-                            metaData: i.metadata || {},
-                            createdAt: i.created_at
-                        }));
+                        interactions = supaInts.map(i => {
+                            const rawBtn = (i.metadata && i.metadata.buttonText) || (i.element && i.element.text) || '';
+                            const cleanBtn = String(rawBtn).replace(/^Button:\s*/i, '').replace(/^Chip:\s*/i, '').trim();
+                            const isClick = (i.event_type === 'click' || i.event_type === 'button_click');
+                            const isPage = (i.event_type === 'page_load' || i.event_type === 'page_visit' || i.event_type === 'page_land');
+                            return {
+                                _id: i.id,
+                                sessionId: i.session_id,
+                                eventType: isClick ? 'button_click' : (isPage ? 'page_land' : i.event_type),
+                                interactionId: i.interaction_id || (i.metadata && i.metadata.intent) || i.event_type || '',
+                                queryText: i.query_text || (i.metadata && i.metadata.query) || '',
+                                botReply: i.bot_reply || (i.metadata && i.metadata.botReply) || (i.metadata && i.metadata.reply) || '',
+                                buttonText: cleanBtn,
+                                linkText: (i.metadata && i.metadata.linkText) || '',
+                                linkUrl: (i.metadata && (i.metadata.linkUrl || i.metadata.targetUrl)) || '',
+                                pageUrl: i.page_url || '',
+                                pagePath: i.page_path || '',
+                                element: i.element || {},
+                                metaData: i.metadata || {},
+                                createdAt: i.created_at
+                            };
+                        });
                     }
                 }
             } catch (e) {
@@ -1576,22 +1649,55 @@ app.get('/api/dashboard/session/:id', authenticateToken, async (req, res) => {
             }
         }
 
-        if (!session) {
-            session = memStore.sessions.get(id);
-            if (session) {
-                interactions = memStore.interactions.filter(i => i.sessionId === session.sessionId);
+        const memSession = memStore.sessions.get(id);
+        if (memSession) {
+            if (!session) {
+                session = { ...memSession };
+            } else {
+                if (memSession.journey && memSession.journey.length > 0) session.journey = memSession.journey;
+                if (memSession.dialogue && memSession.dialogue.length > 0) session.dialogue = memSession.dialogue;
+                if (memSession.botOpenedOnPage) session.botOpenedOnPage = memSession.botOpenedOnPage;
+                if (memSession.chatEngagement) session.chatEngagement = memSession.chatEngagement;
+                if (memSession.lastActive) session.lastActive = memSession.lastActive;
+                if (memSession.lastQuery) session.lastQuery = memSession.lastQuery;
+                if (memSession.metrics) {
+                    session.metrics = { ...session.metrics, ...memSession.metrics };
+                }
+            }
+            const memInts = memStore.interactions.filter(i => i.sessionId === id);
+            if (memInts.length > 0) {
+                const existingIntIds = new Set(interactions.map(i => i._id || i.id));
+                memInts.forEach(mi => {
+                    if (!existingIntIds.has(mi._id)) {
+                        interactions.push(mi);
+                        existingIntIds.add(mi._id);
+                    }
+                });
+            }
+        }
+
+        if (session && !session.lastQuery) {
+            const lastUserMsg = (session.dialogue || []).filter(d => d.sender === 'user').pop();
+            if (lastUserMsg && lastUserMsg.text) {
+                session.lastQuery = lastUserMsg.text;
+            } else if (interactions && interactions.length > 0) {
+                const queryInt = [...interactions].reverse().find(i => (i.eventType === 'message' || i.queryText) && i.interactionId !== 'chat_start');
+                if (queryInt && queryInt.queryText) session.lastQuery = queryInt.queryText;
             }
         }
 
         if (!session) {
+            if (interactions.length === 0) {
+                return res.status(404).json({ error: 'Session not found', session: null });
+            }
             session = {
                 sessionId: id,
                 instituteId: 'rvce',
-                startTime: new Date(),
-                entryPage: '/',
-                exitPage: '/',
+                startTime: interactions[0]?.createdAt || new Date(),
+                entryPage: interactions[0]?.pageUrl || '/',
+                exitPage: interactions[interactions.length - 1]?.pageUrl || '/',
                 metrics: { rageClicks: 0, linksClicked: 0, clickCount: 0, frustrationScore: 0 },
-                device: { type: 'Desktop', os: 'Windows 11', browser: 'Chrome' },
+                device: { type: 'Desktop', os: 'Windows', browser: 'Chrome' },
                 geo: { city: 'Bengaluru', country: 'India', region: 'Karnataka' },
                 journey: []
             };
@@ -1618,7 +1724,11 @@ app.get('/api/dashboard/session/:id', authenticateToken, async (req, res) => {
                 let jTitle = item.eventType.toUpperCase();
                 let jDetail = item.queryText || item.buttonText || item.linkText || item.interactionId;
 
-                if (item.eventType === 'message') {
+                if (item.eventType === 'page_load' || item.eventType === 'page_visit' || item.eventType === 'page_land') {
+                    jType = 'page_land';
+                    jTitle = `Landed on ${item.pagePath || item.pageUrl || '/'}`;
+                    jDetail = `Entry page visit`;
+                } else if (item.eventType === 'message' || item.eventType === 'query') {
                     jType = 'query';
                     jTitle = `Asked: "${item.queryText}"`;
                     jDetail = item.botReply ? `Bot: "${item.botReply}"` : `Intent: ${item.interactionId}`;
@@ -1626,10 +1736,20 @@ app.get('/api/dashboard/session/:id', authenticateToken, async (req, res) => {
                     jType = 'link_click';
                     jTitle = `Clicked Link: "${item.linkText || item.linkUrl}"`;
                     jDetail = `Target: ${item.linkUrl}`;
-                } else if (item.eventType === 'button_click') {
+                } else if (item.eventType === 'button_click' || item.eventType === 'click') {
                     jType = 'button_click';
-                    jTitle = `Clicked Button: "${item.buttonText}"`;
+                    const rawName = item.buttonText || item.element?.text || (item.elementText && item.elementText !== 'click' ? item.elementText : '') || item.interactionId || 'Option';
+                    const btnName = String(rawName).replace(/^Button:\s*/i, '').replace(/^Chip:\s*/i, '').replace(/^Clicked Button:\s*"?/i, '').replace(/"?$/, '');
+                    jTitle = `Clicked Button: "${btnName}"`;
                     jDetail = `Location: ${item.location || 'Chatbot'}`;
+                } else if (item.eventType === 'bot_open' || item.eventType === 'chat_open') {
+                    jType = 'bot_open';
+                    jTitle = 'Opened RVCE Chatbot Widget';
+                    jDetail = `Triggered on ${item.pagePath || '/'}`;
+                } else if (item.eventType === 'bot_close' || item.eventType === 'chat_close' || item.eventType === 'chat_end') {
+                    jType = 'bot_close';
+                    jTitle = 'Closed Chat Window';
+                    jDetail = 'Visitor closed chatbot widget';
                 } else if (item.eventType === 'page_redirect') {
                     jType = 'page_redirect';
                     jTitle = `Redirected to ${item.pagePath}`;
@@ -1646,11 +1766,54 @@ app.get('/api/dashboard/session/:id', authenticateToken, async (req, res) => {
                     elementText: item.buttonText || item.linkText || item.queryText,
                     location: item.location || 'Chatbot',
                     isExternal: !!item.isExternal,
-                    timeOffset: item.formattedOffset,
+                    timeOffset: item.formattedOffset ? `+${item.formattedOffset}` : '+00:00',
                     timestamp: item.createdAt
                 };
             });
         }
+
+        // Post-process journey steps to guarantee strictly sequential step numbers, valid time offsets, and clean labels
+        journey = journey.map((item, idx) => {
+            const itemTime = new Date(item.timestamp || startTime).getTime();
+            const diffSec = Math.max(0, Math.round((itemTime - startTime) / 1000));
+            const mins = Math.floor(diffSec / 60);
+            const secs = diffSec % 60;
+            const computedOffset = `+${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+
+            let jType = item.type || 'interaction';
+            let jTitle = item.title;
+            let jDetail = item.detail;
+
+            if (jType === 'click') jType = 'button_click';
+            if (jType === 'page_load' || jType === 'page_visit') jType = 'page_land';
+
+            if (jType === 'button_click') {
+                if (!jTitle || jTitle === 'Action' || jTitle === 'CLICK' || jTitle === 'click') {
+                    const rawName = item.elementText || (item.detail && item.detail !== 'click' ? item.detail : '') || 'Option Selected';
+                    const btnName = String(rawName).replace(/^Button:\s*/i, '').replace(/^Chip:\s*/i, '').replace(/^Clicked Button:\s*"?/i, '').replace(/"?$/, '');
+                    jTitle = `Clicked Button: "${btnName}"`;
+                }
+                if (!jDetail || jDetail === 'click' || jDetail === 'Action') {
+                    jDetail = `Location: ${item.location || 'Chatbot'}`;
+                }
+            } else if (jType === 'page_land') {
+                if (!jTitle || jTitle === 'Action' || jTitle === 'PAGE_LOAD') {
+                    jTitle = `Landed on ${item.url || session.entryPage || '/'}`;
+                }
+                if (!jDetail || jDetail === 'click') {
+                    jDetail = 'Entry page visit';
+                }
+            }
+
+            return {
+                ...item,
+                step: idx + 1,
+                type: jType,
+                title: jTitle,
+                detail: jDetail,
+                timeOffset: (item.timeOffset && item.timeOffset !== '+00:00') ? item.timeOffset : computedOffset
+            };
+        });
 
         let dialogue = session.dialogue || [];
         if (dialogue.length === 0) {
@@ -1671,10 +1834,21 @@ app.delete('/api/dashboard/sessions/:id', authenticateToken, async (req, res) =>
     try {
         const id = req.params.id;
         memStore.sessions.delete(id);
+        memStore.interactions = memStore.interactions.filter(i => i.sessionId !== id);
         if (isMongoConnected) {
             await Session.deleteOne({ sessionId: id });
             await Interaction.deleteMany({ sessionId: id });
         }
+        if (supabase) {
+            try {
+                await supabase.from('sessions').delete().eq('session_id', id);
+                await supabase.from('interactions').delete().eq('session_id', id);
+            } catch (supaErr) {
+                console.warn('Supabase delete session error:', supaErr.message);
+            }
+        }
+        invalidateStorageCache();
+        broadcastEvent('session_deleted', { sessionId: id });
         res.json({ ok: true, message: 'Session deleted' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1745,7 +1919,7 @@ app.all(['/api/dashboard/records', '/api/dashboard/records/delete'], authenticat
 
             if (supabase) {
                 try {
-                    await supabase.from('interactions').delete().gte('timestamp', date + 'T00:00:00Z').lte('timestamp', date + 'T23:59:59Z');
+                    await supabase.from('interactions').delete().gte('created_at', date + 'T00:00:00Z').lte('created_at', date + 'T23:59:59Z');
                     await supabase.from('sessions').delete().gte('start_time', date + 'T00:00:00Z').lte('start_time', date + 'T23:59:59Z');
                 } catch (e) { }
             }
@@ -1780,7 +1954,7 @@ app.all(['/api/dashboard/records', '/api/dashboard/records/delete'], authenticat
                     const startIso = `${yyyy}-${mm}-01T00:00:00Z`;
                     const lastDay = new Date(parseInt(yyyy), parseInt(mm), 0).getDate();
                     const endIso = `${yyyy}-${mm}-${lastDay}T23:59:59Z`;
-                    await supabase.from('interactions').delete().gte('timestamp', startIso).lte('timestamp', endIso);
+                    await supabase.from('interactions').delete().gte('created_at', startIso).lte('created_at', endIso);
                     await supabase.from('sessions').delete().gte('start_time', startIso).lte('start_time', endIso);
                 } catch (e) { }
             }
@@ -2090,9 +2264,37 @@ app.get('/api/dashboard/unanswered', authenticateToken, async (req, res) => {
                 }).sort({ createdAt: -1 }).limit(60).lean();
             } catch (e) { }
         }
+        if (unanswered.length === 0 && supabase) {
+            try {
+                const { data } = await supabase.from('interactions').select('*')
+                    .or('interaction_id.eq.unmatched,is_unanswered.eq.true')
+                    .order('created_at', { ascending: false }).limit(60);
+                if (data && data.length > 0) {
+                    unanswered = data.map(d => ({
+                        id: d.id,
+                        sessionId: d.session_id,
+                        queryText: d.query_text,
+                        botReply: d.bot_reply,
+                        createdAt: d.created_at,
+                        timestamp: d.created_at
+                    }));
+                }
+            } catch (e) { }
+        }
         if (unanswered.length === 0) {
             unanswered = Array.from(memStore.unanswered.values());
         }
+
+        const memUnanswered = memStore.interactions.filter(i => i.isUnanswered || i.interactionId === 'unmatched');
+        const existingKeys = new Set(unanswered.map(u => u.queryText || u.id));
+        memUnanswered.forEach(mu => {
+            const key = mu.queryText || mu._id;
+            if (key && !existingKeys.has(key)) {
+                unanswered.push(mu);
+                existingKeys.add(key);
+            }
+        });
+
         res.json(unanswered);
     } catch (err) {
         res.status(500).json({ error: err.message });

@@ -174,7 +174,7 @@
             : '';
         let vercelUrl = (window.rvceChatbotSettings && window.rvceChatbotSettings.vercelUrl)
             ? String(window.rvceChatbotSettings.vercelUrl).trim()
-            : '';
+            : (typeof window !== 'undefined' && window.RVCE_TELEMETRY_URL ? String(window.RVCE_TELEMETRY_URL).trim() : '');
         if (vercelUrl) {
             vercelUrl = vercelUrl.replace(/\/(dashboard|api)\/?$/, '').replace(/\/+$/, '');
             if (vercelUrl.includes('.vercel.app') && vercelUrl.startsWith('http://')) {
@@ -250,21 +250,39 @@
         }, true);
     };
 
-    // Track Button & Chip Clicks inside Chatbot
+    // Track Button, Link & Chip Clicks inside Chatbot
     document.addEventListener('click', (e) => {
         const target = e.target;
         if (!target) return;
-        const btn = target.closest('button') || target.closest('a') || target.closest('.suggestion-chip');
+        const btn = target.closest('button') || target.closest('a') || target.closest('.suggestion-chip') || target.closest('.chip');
         if (!btn) return;
 
-        // Only track clicks inside the chatbot or explicit tracking attributes
-        const isChatbot = btn.closest('#rvce-chatbot-root') !== null;
-        const isTracked = btn.hasAttribute('data-rvce-track') || btn.classList.contains('suggestion-chip');
+        // Track clicks inside the chatbot or explicit tracking attributes
+        const isChatbot = btn.closest('#rvce-chatbot-root') !== null || btn.closest('#rvce-chat-modal') !== null;
+        const isTracked = btn.hasAttribute('data-rvce-track') || btn.classList.contains('suggestion-chip') || btn.classList.contains('chip');
 
         if (isChatbot || isTracked) {
-            const elementId = btn.id || btn.getAttribute('data-query') || btn.className || 'action_button';
-            const elementText = (btn.innerText || btn.textContent || '').substring(0, 40).trim();
-            trackEvent('click', { elementId, elementText });
+            const isLink = btn.tagName.toLowerCase() === 'a' || btn.hasAttribute('href');
+            const linkUrl = btn.href || btn.getAttribute('href') || '';
+            const elementId = btn.id || btn.getAttribute('data-query') || btn.getAttribute('data-action') || btn.className || 'action_button';
+            const elementText = (btn.innerText || btn.textContent || '').substring(0, 60).trim();
+
+            if (isLink && linkUrl && !linkUrl.startsWith('javascript:') && !linkUrl.startsWith('#')) {
+                const isExt = linkUrl.startsWith('http') && !linkUrl.includes('rvce.edu.in');
+                trackEvent('link_click', {
+                    linkUrl: linkUrl,
+                    targetUrl: linkUrl,
+                    linkText: elementText || linkUrl,
+                    isExternal: isExt,
+                    location: isChatbot ? 'Chatbot' : 'Webpage'
+                }, true);
+            } else {
+                trackEvent('button_click', {
+                    elementId: elementId,
+                    buttonText: elementText,
+                    location: isChatbot ? 'Chatbot' : 'Webpage'
+                }, true);
+            }
         }
     }, { passive: true });
 
@@ -522,25 +540,47 @@
         }
     });
 
-    // Queue initial page context without immediate network dispatch.
-    // Transmitted cleanly together when the user interacts with the chatbot.
-    telemetryQueue.push({
-        sessionId: SESSION_ID,
-        timestamp: new Date().toISOString(),
-        eventType: 'page_load',
-        url: window.location.href,
-        subsite: getSubsite(),
-        data: {
-            title: document.title,
-            referrer: document.referrer || 'direct',
-            screen: `${window.innerWidth}x${window.innerHeight}`,
-            subsite: getSubsite()
-        }
-    });
+    // Register initial page load and flush immediately for sub-second session tracking
+    trackEvent('page_load', {
+        title: document.title,
+        referrer: document.referrer || 'direct',
+        screen: `${window.innerWidth}x${window.innerHeight}`,
+        subsite: getSubsite()
+    }, true);
 
     // Expose Session ID globally for Chatbot Engine
     window.rvceSessionId = SESSION_ID;
     window.rvceGetSessionId = function() { return SESSION_ID; };
+
+    // Standardized RVCETelemetry API Interface (Supports Simulator, Micro-interactions & Test Suites)
+    window.RVCETelemetry = {
+        getSessionId: () => SESSION_ID,
+        trackEvent: trackEvent,
+        trackBotOpen: window.rvceTrackBotOpen,
+        trackBotClose: function() {
+            trackEvent('bot_close', { pagePath: window.location.pathname || '/' }, true);
+        },
+        trackMessage: function(query, intent, botReply) {
+            trackEvent('message', { query: query, intent: intent, botReply: botReply }, true);
+        },
+        trackHesitation: function(draft) {
+            trackEvent('typing_hesitation', { draftText: draft, detail: 'Erased question draft' }, true);
+        },
+        trackBotFallback: function(query, reply) {
+            trackEvent('bot_fallback', { queryText: query, botReply: reply, isUnanswered: true }, true);
+        },
+        trackInteraction: function(type, label, meta = {}) {
+            trackEvent(type, { elementId: label, elementText: label, ...meta }, true);
+        },
+        trackSimulateBot: function(botName, botCategory) {
+            trackEvent('bot_probe', {
+                isBot: true,
+                botName: botName,
+                botCategory: botCategory,
+                detail: `Automated crawler simulation: ${botName}`
+            }, true);
+        }
+    };
 
     // Automatic Cross-Portal Link Decoration for seamless session handoff
     function decorateRvceUrl(rawUrl) {

@@ -4190,24 +4190,26 @@ function logChatInteraction(query, intent_id, metadata = {}) {
         localStorage.setItem('rvce_standalone_logs', JSON.stringify(logs));
     } catch(e) { console.warn("Local logging failed", e); }
 
-    // 3. Global Cloud Logging (MongoDB / Vercel API)
-    const centralBase = getCleanCentralBase();
-    if (centralBase) {
-        try {
-            fetch(centralBase + '/api/logs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    institute_id: 'rvce',
-                    instituteId: 'rvce',
-                    subsite: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
-                    site_category: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
-                    api_key: 'rvce_key_12345',
-                    sessionId: currentSessionId,
-                    events: [{ eventType: 'message', data: { query: query, intent: intent_id, ...metadata } }]
-                })
-            }).catch(() => {});
-        } catch(e) { /* silent fail */ }
+    // 3. Global Cloud Logging fallback (only if telemetry.js is not loaded)
+    if (typeof window.rvceTrackEvent !== 'function') {
+        const centralBase = getCleanCentralBase();
+        if (centralBase) {
+            try {
+                fetch(centralBase + '/api/logs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        institute_id: 'rvce',
+                        instituteId: 'rvce',
+                        subsite: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
+                        site_category: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
+                        api_key: 'rvce_key_12345',
+                        sessionId: currentSessionId,
+                        events: [{ eventType: 'message', data: { query: query, intent: intent_id, ...metadata } }]
+                    })
+                }).catch(() => {});
+            } catch(e) { /* silent fail */ }
+        }
     }
 }
 
@@ -4267,24 +4269,26 @@ function logMicroInteraction(type, label, metadata = {}) {
         localStorage.setItem('rvce_standalone_logs', JSON.stringify(logs));
     } catch(e) { console.warn("Micro-interaction logging failed", e); }
 
-    // Cloud logging
-    const centralBase = getCleanCentralBase();
-    if (centralBase) {
-        try {
-            fetch(centralBase + '/api/logs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    institute_id: 'rvce',
-                    instituteId: 'rvce',
-                    subsite: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
-                    site_category: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
-                    api_key: 'rvce_key_12345',
-                    sessionId: currentSessionId,
-                    events: [{ eventType: type, data: { elementId: label, elementText: label, ...metadata } }]
-                })
-            }).catch(() => {});
-        } catch(e) { /* silent fail */ }
+    // Cloud logging fallback (only if telemetry.js is not loaded)
+    if (typeof window.rvceTrackEvent !== 'function') {
+        const centralBase = getCleanCentralBase();
+        if (centralBase) {
+            try {
+                fetch(centralBase + '/api/logs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        institute_id: 'rvce',
+                        instituteId: 'rvce',
+                        subsite: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
+                        site_category: (typeof window !== 'undefined' && typeof window.rvceGetSubsite === 'function') ? window.rvceGetSubsite() : 'main',
+                        api_key: 'rvce_key_12345',
+                        sessionId: currentSessionId,
+                        events: [{ eventType: type, data: { elementId: label, elementText: label, ...metadata } }]
+                    })
+                }).catch(() => {});
+            } catch(e) { /* silent fail */ }
+        }
     }
 }
 
@@ -4353,12 +4357,13 @@ function process(rawText) {
     // MODERATION CHECK — runs BEFORE intent matching (use original text)
     const mod = checkModeration(text);
     if (mod.blocked) {
-        logChatInteraction(text, 'moderated_' + mod.type);
+        const warnText = getModerationResponse(mod.type);
+        logChatInteraction(text, 'moderated_' + mod.type, { botReply: warnText });
         addUser(text);
         inp.value = '';
         disOld();
         showTyp();
-        setTimeout(()=>{hideTyp();addBotWarn(getModerationResponse(mod.type));},600);
+        setTimeout(()=>{hideTyp();addBotWarn(warnText);},600);
         return;
     }
 
@@ -4377,7 +4382,11 @@ function process(rawText) {
 
     // === MULTI-INTENT HANDLING ===
     if (result.type === 'multi') {
-        logChatInteraction(text, 'multi_intent');
+        const firstResp = getResponse(result.ids[0]);
+        logChatInteraction(text, 'multi_intent', {
+            intents: result.ids,
+            botReply: firstResp?.text || `Covering: ${result.ids.join(', ')}`
+        });
 
         let i = 0;
         const processNext = () => {
@@ -4421,17 +4430,22 @@ function process(rawText) {
 
     // === MULTI-TURN CONTEXT HANDLING ===
     if (result.type === 'context') {
-        logChatInteraction(text, result.id);
         const ctxId = result.id;
 
         if (ctxId === '_more') {
             // "Tell me more" — provide deeper info on last topic
             if (SESSION.lastIntent) {
                 const deepInfo = getDeepInfo(SESSION.lastIntent);
-                if (deepInfo) { botReply(deepInfo); return; }
+                if (deepInfo) {
+                    logChatInteraction(text, '_more', { botReply: deepInfo.text || '' });
+                    botReply(deepInfo);
+                    return;
+                }
             }
             // Fallback: show menu
-            botReply({ text: T("I'd love to tell you more! What topic are you interested in? 🤔","What topic would you like more information about?"), buttons: [], noMenu: true });
+            const moreFallback = { text: T("I'd love to tell you more! What topic are you interested in? 🤔","What topic would you like more information about?"), buttons: [], noMenu: true };
+            logChatInteraction(text, '_more', { botReply: moreFallback.text });
+            botReply(moreFallback);
             setTimeout(showMenu, 600);
             return;
         }
@@ -4442,9 +4456,13 @@ function process(rawText) {
                 SESSION.navStack.pop(); // Remove current
                 const prevId = SESSION.navStack[SESSION.navStack.length - 1];
                 SESSION.lastIntent = prevId;
-                botReply(getResponse(prevId));
+                const prevResp = getResponse(prevId);
+                logChatInteraction(text, '_back', { botReply: prevResp?.text || '' });
+                botReply(prevResp);
             } else {
-                botReply({ text: T("Let's go back to the main menu! 📋","Returning to the main menu."), buttons: [], noMenu: true });
+                const backResp = { text: T("Let's go back to the main menu! 📋","Returning to the main menu."), buttons: [], noMenu: true };
+                logChatInteraction(text, '_back', { botReply: backResp.text });
+                botReply(backResp);
                 setTimeout(showMenu, 600);
             }
             return;
@@ -4454,8 +4472,10 @@ function process(rawText) {
             // Show related topics
             if (SESSION.lastIntent) {
                 const related = getRelatedTopics(SESSION.lastIntent);
+                logChatInteraction(text, '_what_else', { botReply: related?.text || '' });
                 botReply(related);
             } else {
+                logChatInteraction(text, '_what_else', { botReply: 'Opening main menu' });
                 setTimeout(showMenu, 300);
             }
             return;
@@ -4465,21 +4485,30 @@ function process(rawText) {
             // Affirmative — re-run last intent or show menu
             if (SESSION.lastIntent && SESSION.lastIntent !== 'greet') {
                 const deepInfo = getDeepInfo(SESSION.lastIntent);
-                if (deepInfo) { botReply(deepInfo); return; }
+                if (deepInfo) {
+                    logChatInteraction(text, '_yes', { botReply: deepInfo.text || '' });
+                    botReply(deepInfo);
+                    return;
+                }
             }
+            logChatInteraction(text, '_yes', { botReply: 'Opening main menu' });
             setTimeout(showMenu, 300);
             return;
         }
 
         if (ctxId === '_no') {
-            botReply({ text: T("No worries! Let me know if you need anything else 😊","Understood. Feel free to ask about any other topic."), buttons: [], noMenu: true });
+            const noResp = { text: T("No worries! Let me know if you need anything else 😊","Understood. Feel free to ask about any other topic."), buttons: [], noMenu: true };
+            logChatInteraction(text, '_no', { botReply: noResp.text });
+            botReply(noResp);
             setTimeout(showMenu, 800);
             return;
         }
     }
 
     if (result.type === 'exact') {
-        logChatInteraction(text, result.id);
+        const id = result.id;
+        const resp = getResponse(id);
+        logChatInteraction(text, result.id, { botReply: resp?.text || '' });
         // Track navigation history
         if (!result.id.startsWith('_') && result.id !== 'menu' && result.id !== 'greet') {
             if (SESSION.navStack.length === 0 || SESSION.navStack[SESSION.navStack.length - 1] !== result.id) {
@@ -4488,12 +4517,10 @@ function process(rawText) {
             }
         }
         // High confidence — exact keyword or button click, respond directly
-        const id = result.id;
-        if (id === 'greet') { botReply(getResponse('greet')); setTimeout(showMenu,1200); }
+        if (id === 'greet') { botReply(resp); setTimeout(showMenu,1200); }
         else if (id === 'menu') { setTimeout(showMenu,300); }
-        else { botReply(getResponse(id)); }
+        else { botReply(resp); }
     } else if (result.type === 'keyword') {
-        logChatInteraction(text, result.id);
         // Track navigation history
         if (!result.id.startsWith('_') && result.id !== 'menu' && result.id !== 'greet') {
             if (SESSION.navStack.length === 0 || SESSION.navStack[SESSION.navStack.length - 1] !== result.id) {
@@ -4522,11 +4549,9 @@ function process(rawText) {
             });
         }
         r.noMenu = actualResponse.noMenu || false;
+        logChatInteraction(text, result.id, { botReply: r.text });
         botReply(r);
     } else if (result.type === 'fuzzy') {
-        logChatInteraction(text, 'fuzzy_match', { 
-            suggestions: result.suggestions.map(id => INTENT_LABELS[id] || id).join(', ') 
-        });
         // Low confidence — no exact keyword, fuzzy match found
         const r = { text: '', buttons: [], noMenu: false };
         r.text = T(
@@ -4538,15 +4563,20 @@ function process(rawText) {
             a: sid,
             i: '🔍'
         }));
+        logChatInteraction(text, 'fuzzy_match', { 
+            suggestions: result.suggestions.map(id => INTENT_LABELS[id] || id).join(', '),
+            botReply: r.text
+        });
         botReply(r);
     } else if (result.type === 'fac_multi') {
-        logChatInteraction(text, 'fac_multi');
+        const botText = T(`I found **${result.matches.length}** faculty members matching your search. Who are you looking for?`, `I found multiple faculty members. Please choose one:`);
+        logChatInteraction(text, 'fac_multi', { botReply: botText });
         const btns = result.matches.slice(0, 8).map(m => {
             const slug = m.f.n.toLowerCase().replace(/[^a-z0-9]/g, '');
             return { l: `${m.f.n} (${m.d.toUpperCase()})`, a: `fac_${slug}`, i: '👨‍🏫' };
         });
         botReply({
-            text: T(`I found **${result.matches.length}** faculty members matching your search. Who are you looking for?`, `I found multiple faculty members. Please choose one:`),
+            text: botText,
             buttons: btns,
             noMenu: true
         });
@@ -4569,17 +4599,19 @@ function process(rawText) {
             if (matches.length === 1) {
                 const f = matches[0].f;
                 const slug = f.n.toLowerCase().replace(/[^a-z0-9]/g, '');
-                logChatInteraction(text, `fac_${slug}`);
-                botReply(getResponse(`fac_${slug}`));
+                const fResp = getResponse(`fac_${slug}`);
+                logChatInteraction(text, `fac_${slug}`, { botReply: fResp?.text || '' });
+                botReply(fResp);
                 return;
             } else if (matches.length > 1) {
-                logChatInteraction(text, 'fac_multi');
+                const multiText = T(`I found **${matches.length}** faculty members matching your search. Who are you looking for?`, `I found multiple faculty members. Please choose one:`);
+                logChatInteraction(text, 'fac_multi', { botReply: multiText });
                 const btns = matches.slice(0, 8).map(m => {
                     const slug = m.f.n.toLowerCase().replace(/[^a-z0-9]/g, '');
                     return { l: `${m.f.n} (${m.d.toUpperCase()})`, a: `fac_${slug}`, i: '👨‍🏫' };
                 });
                 botReply({
-                    text: T(`I found **${matches.length}** faculty members matching your search. Who are you looking for?`, `I found multiple faculty members. Please choose one:`),
+                    text: multiText,
                     buttons: btns,
                     noMenu: true
                 });
@@ -4587,7 +4619,6 @@ function process(rawText) {
             }
         }
 
-        logChatInteraction(text, 'unmatched');
         // No match at all
         const r = { text: '', buttons: [], noMenu: false };
         r.text = T(
@@ -4595,6 +4626,7 @@ function process(rawText) {
             "I'm sorry, I don't have information on that topic. Please choose from the menu below:"
         );
         r.noMenu = true;
+        logChatInteraction(text, 'unmatched', { botReply: r.text, isUnanswered: true });
         botReply(r);
         setTimeout(showMenu, 600);
     }
@@ -4811,20 +4843,30 @@ function showMenu() {
 }
 
 function handleAction(a) { 
-    if (a === 'menu') { showMenu(); return; } 
+    if (a === 'menu') { 
+        logChatInteraction('[Selected: Menu]', 'menu', { botReply: 'Pick your adventure!' });
+        showMenu(); 
+        return; 
+    } 
     if (a === '_back') {
         if (typeof SESSION !== 'undefined' && SESSION.navStack && SESSION.navStack.length > 1) {
             SESSION.navStack.pop();
             const prevId = SESSION.navStack[SESSION.navStack.length - 1];
             SESSION.lastIntent = prevId;
-            botReply(getResponse(prevId));
+            const prevResp = getResponse(prevId);
+            logChatInteraction('[Selected: Back]', '_back', { botReply: prevResp?.text || '' });
+            botReply(prevResp);
         } else {
+            logChatInteraction('[Selected: Back]', 'menu', { botReply: 'Returning to main menu' });
             showMenu();
         }
         return;
     }
     const r = getResponse(a); 
     if (!r) { showMenu(); return; } 
+
+    const actionLabel = (typeof INTENT_LABELS !== 'undefined' && INTENT_LABELS[a]) || a;
+    logChatInteraction(`[Selected: ${actionLabel}]`, a, { botReply: r.text || '', action: a, source: 'action_button' }); 
 
     if (typeof SESSION !== 'undefined' && SESSION.pendingOverflows) {
         const idx = SESSION.pendingOverflows.indexOf(a);
@@ -4969,19 +5011,21 @@ setTimeout(()=>{
                 const btn = target.closest('.act-btn');
                 const label = btn.textContent.trim();
                 const action = btn.dataset.action || 'link';
-                logMicroInteraction('click', `Button: ${label}`, { action, element: 'act-btn' });
+                logMicroInteraction('button_click', label, { buttonText: label, action, location: 'Chatbot', element: 'act-btn' });
                 return;
             }
             // Quick Suggestion Chips
             if (target.closest('.suggestion-chip')) {
                 const chip = target.closest('.suggestion-chip');
-                logMicroInteraction('click', `Chip: ${chip.textContent.trim()}`, { query: chip.dataset.query });
+                const label = chip.textContent.trim();
+                logMicroInteraction('button_click', label, { buttonText: label, query: chip.dataset.query, location: 'Chatbot', element: 'chip' });
                 return;
             }
             // Links inside chat
             if (target.closest('a')) {
                 const link = target.closest('a');
-                logMicroInteraction('click', `Link: ${link.textContent.trim().substring(0, 60)}`, { url: link.href, element: 'a' });
+                const label = link.textContent.trim().substring(0, 60);
+                logMicroInteraction('link_click', label, { linkText: label, linkUrl: link.href, targetUrl: link.href, location: 'Chatbot', element: 'a' });
                 return;
             }
         }, { passive: true });

@@ -3434,6 +3434,8 @@
                 if (!sessionId) return;
                 window.open(`/print-report.html?session=${encodeURIComponent(sessionId)}&autoprint=true`, '_blank');
             }
+            window.downloadSessionPdf = downloadSessionPdf;
+            window.exportSingleSessionPdf = downloadSessionPdf;
 
             function downloadDailyPdf() {
                 const dp = document.getElementById('dailyExportDatePicker');
@@ -4344,7 +4346,12 @@
                         sourceBadge = '<span class="tag" style="background:#1e293b; color:#94a3b8; border:1px solid #334155; font-size:10px; padding:2px 6px; border-radius:4px;">🌐 ' + (s.referrer || 'Direct') + '</span>';
                     }
 
-                    const lastQuery = s.lastQuery || (s.chatEngagement === 'opened_only' ? 'Opened Chatbot (No Query)' : 'Browsed Portal');
+                    const hasQuery = !!(s.lastQuery && s.lastQuery !== 'Browsed Admissions Portal');
+                    const displayQueryText = hasQuery 
+                        ? `"${s.lastQuery}"` 
+                        : (s.chatEngagement === 'opened_only' 
+                            ? `<span style="color:#f59e0b; font-style:italic;">👁️ Opened Chat (No Query)</span>`
+                            : `<span style="color:#94a3b8; font-style:italic;">🌐 Browsed Site Pages</span>`);
 
                     // Timing & Chat Lifecycle calculations
                     const startDate = new Date(s.startTime || s.createdAt || Date.now());
@@ -4357,7 +4364,7 @@
                     const startTimeStr = startDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
                     const endTimeStr = endDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
                     const exitPath = s.exitPage ? (new URL(s.exitPage, 'https://rvce.edu.in').pathname || '/') : entryPath;
-                    const messageCount = s.dialogue?.length || s.metrics?.messageCount || (s.chatEngagement === 'conversed' ? 2 : 0);
+                    const messageCount = s.dialogue?.length || s.metrics?.messageCount || (hasQuery ? 1 : 0);
 
                     // Bot vs User Badge
                     const isMultiPortal = Array.isArray(s.subsitesTouched) && s.subsitesTouched.length > 1;
@@ -4366,14 +4373,19 @@
                         ? `<span class="tag tag-pink" style="margin-right:4px;">🤖 ${s.botName || 'Bot'}</span>`
                         : `<span class="tag tag-blue" style="margin-right:4px;">👤 User</span>`;
 
-                    // Engagement Tag
+                    // Engagement Tag & Status
+                    const hasOpenedBot = (s.chatEngagement === 'conversed' || s.chatEngagement === 'opened_only' || !!s.botOpenedOnPage);
                     let engagementBadge = '';
-                    if (s.chatEngagement === 'conversed' || (s.interactionsCount > 0 && s.lastQuery)) {
+                    let chatStatus = 'Browsed Site';
+                    if (s.chatEngagement === 'conversed' || (s.interactionsCount > 0 && hasQuery)) {
                         engagementBadge = `<span class="tag tag-green" style="font-size:10px;">💬 Chat Active</span>`;
-                    } else if (s.chatEngagement === 'opened_only') {
+                        chatStatus = 'Engaged in Chat';
+                    } else if (s.chatEngagement === 'opened_only' || hasOpenedBot) {
                         engagementBadge = `<span class="tag tag-amber" style="font-size:10px;">👁️ Bounced</span>`;
+                        chatStatus = 'Abandoned (Opened Only)';
                     } else {
                         engagementBadge = `<span class="tag tag-gray" style="font-size:10px;">🌐 Browsed</span>`;
+                        chatStatus = 'Browsed Site';
                     }
 
                     return `
@@ -4390,13 +4402,14 @@
                             <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">💻 ${deviceStr}</div>
                         </td>
 
-                        <!-- 2. Chat Started -->
+                        <!-- 2. Chat Started / Landing -->
                         <td>
                             <div style="display:flex; align-items:center; gap:6px; margin-bottom:4px;">
                                 <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981;"></span>
                                 <span style="font-weight:700; color:#10b981; font-size:12.5px;">${startTimeStr}</span>
                                 ${sourceBadge}
                             </div>
+                            ${hasOpenedBot ? `
                             <div style="font-size:11.5px; font-family:'JetBrains Mono', monospace; margin-top:3px;" title="Chatbot triggered on ${triggerPage}">
                                 <span style="color:#38bdf8; font-weight:700;">📍 Opened on:</span>
                                 <span style="color:#f8fafc; background:rgba(56,189,248,0.18); border:1px solid rgba(56,189,248,0.4); padding:1px 6px; border-radius:4px; font-weight:600;">${triggerPage}</span>
@@ -4404,6 +4417,15 @@
                             <div style="font-size:10.5px; color:#64748b; margin-top:3px;">
                                 Landed: <span style="color:#cbd5e1;">${entryPath}</span>
                             </div>
+                            ` : `
+                            <div style="font-size:11.5px; font-family:'JetBrains Mono', monospace; margin-top:3px;" title="Visitor landed on ${entryPath}">
+                                <span style="color:#94a3b8; font-weight:700;">🌐 Landed:</span>
+                                <span style="color:#cbd5e1; background:rgba(148,163,184,0.1); border:1px solid rgba(148,163,184,0.25); padding:1px 6px; border-radius:4px; font-weight:600;">${entryPath}</span>
+                            </div>
+                            <div style="font-size:10.5px; color:#64748b; margin-top:3px;">
+                                Status: <span style="color:#94a3b8;">Bot Not Opened</span>
+                            </div>
+                            `}
                         </td>
 
                         <!-- 3. In-Chat Activity -->
@@ -4412,8 +4434,8 @@
                                 <span class="tag tag-indigo" style="font-size:11px; font-weight:700;">💬 ${messageCount} turns</span>
                                 ${s.metrics?.linksClicked > 0 ? `<span class="tag tag-cyan" style="font-size:10px;">🔗 ${s.metrics.linksClicked} links</span>` : ''}
                             </div>
-                            <div style="max-width:220px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; font-weight:600; color:#fff; font-size:12px;" title="${lastQuery}">
-                                "${lastQuery}"
+                            <div style="max-width:220px; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; font-weight:600; color:#fff; font-size:12px;" title="${s.lastQuery || ''}">
+                                ${displayQueryText}
                             </div>
                         </td>
 
@@ -4428,7 +4450,7 @@
                                 Exit: <span style="color:#cbd5e1;">${exitPath}</span>
                             </div>
                             <div style="font-size:10.5px; color:#64748b; margin-top:2px;">
-                                Status: ${s.chatEngagement === 'opened_only' ? 'Abandoned' : 'Closed Normally'}
+                                Status: <span style="color:#cbd5e1;">${chatStatus}</span>
                             </div>
                         </td>
 
@@ -4636,38 +4658,51 @@
                 renderPlayerMarkers(journey);
 
                 container.innerHTML = journey.map((item, idx) => {
-                    let badgeClass = 'badge-land';
-                    let badgeIcon = '🚀';
-                    let badgeLabel = 'Landed on Page';
+                    const t = String(item.type || '').toLowerCase();
+                    let badgeClass = 'badge-btn';
+                    let badgeIcon = '⚡';
+                    let badgeLabel = 'User Action';
 
-                    if (item.type === 'bot_open') {
+                    if (t === 'page_land' || t === 'page_visit' || t === 'page_load') {
+                        badgeClass = 'badge-land'; badgeIcon = '🚀'; badgeLabel = 'Landed on Page';
+                    } else if (t === 'bot_open' || t === 'chat_open') {
                         badgeClass = 'badge-bot'; badgeIcon = '🤖'; badgeLabel = 'Opened Chatbot Widget';
-                    } else if (item.type === 'query' || item.type === 'message') {
+                    } else if (t === 'bot_close' || t === 'chat_close' || t === 'chat_end') {
+                        badgeClass = 'badge-exit'; badgeIcon = '🏁'; badgeLabel = 'Closed Chat Window';
+                    } else if (t === 'query' || t === 'message') {
                         badgeClass = 'badge-query'; badgeIcon = '💬'; badgeLabel = 'User Query Given';
-                    } else if (item.type === 'bot_reply') {
+                    } else if (t === 'bot_reply') {
                         badgeClass = 'badge-bot'; badgeIcon = '💡'; badgeLabel = 'Bot Response';
-                    } else if (item.type === 'button_click') {
+                    } else if (t === 'button_click' || t === 'click') {
                         badgeClass = 'badge-btn'; badgeIcon = '🔘'; badgeLabel = `Clicked Button [${item.location || 'Chatbot'}]`;
-                    } else if (item.type === 'link_click') {
+                    } else if (t === 'link_click') {
                         badgeClass = 'badge-link'; badgeIcon = '🔗'; badgeLabel = item.isExternal ? 'Clicked External Outgoing Link' : 'Clicked Internal Link';
-                    } else if (item.type === 'page_redirect') {
+                    } else if (t === 'page_redirect') {
                         badgeClass = 'badge-redirect'; badgeIcon = '🔄'; badgeLabel = 'Page Redirection / Navigation';
-                    } else if (item.type === 'rage_click') {
+                    } else if (t === 'cross_subsite_hop') {
+                        badgeClass = 'badge-redirect'; badgeIcon = '🌐'; badgeLabel = 'Cross-Subsite Hop';
+                    } else if (t === 'rage_click') {
                         badgeClass = 'badge-rage'; badgeIcon = '⚡'; badgeLabel = 'Rage Click (High Friction)';
-                    } else if (item.type === 'dead_click') {
+                    } else if (t === 'dead_click') {
                         badgeClass = 'badge-rage'; badgeIcon = '⚠️'; badgeLabel = 'Dead Click';
-                    } else if (item.type === 'typing_hesitation') {
+                    } else if (t === 'typing_hesitation') {
                         badgeClass = 'badge-rage'; badgeIcon = '⏳'; badgeLabel = 'Chatbot Typing Hesitation';
-                    } else if (item.type === 'bot_fallback') {
+                    } else if (t === 'bot_fallback') {
                         badgeClass = 'badge-rage'; badgeIcon = '📉'; badgeLabel = 'Bot Fallback / Confusion';
-                    } else if (item.type === 'bot_bounce') {
+                    } else if (t === 'bot_bounce') {
                         badgeClass = 'badge-exit'; badgeIcon = '👁️'; badgeLabel = 'Chatbot Bounce (<5s)';
-                    } else if (item.type === 'exit') {
+                    } else if (t === 'copy') {
+                        badgeClass = 'badge-query'; badgeIcon = '📋'; badgeLabel = 'Copied Chat Text';
+                    } else if (t === 'dwell') {
+                        badgeClass = 'badge-query'; badgeIcon = '⏱️'; badgeLabel = 'Chat Active Dwell';
+                    } else if (t === 'lead_submit' || t === 'form_submit') {
+                        badgeClass = 'badge-bot'; badgeIcon = '🎯'; badgeLabel = 'Submitted Application Lead';
+                    } else if (t === 'exit') {
                         badgeClass = 'badge-exit'; badgeIcon = '🏁'; badgeLabel = 'Session Drop-off / Exited Site';
                     }
 
                     let customBody = '';
-                    if (item.type === 'typing_hesitation') {
+                    if (t === 'typing_hesitation') {
                         customBody = `
                         <div style="background:rgba(236,72,153,0.12); border:1px solid rgba(236,72,153,0.35); border-radius:10px; padding:12px; margin-top:6px;">
                             <strong style="color:#f472b6; font-size:12.5px; display:block; margin-bottom:4px;">⏳ Microsoft Clarity Typing Hesitation</strong>
@@ -4675,22 +4710,22 @@
                             ${item.draftText ? `<div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#fbcfe8; margin-top:4px;">Draft text: "${item.draftText}"</div>` : ''}
                         </div>
                     `;
-                    } else if (item.type === 'bot_fallback') {
+                    } else if (t === 'bot_fallback') {
                         customBody = `
                         <div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); border-radius:10px; padding:12px; margin-top:6px;">
                             <strong style="color:#fbbf24; font-size:12.5px; display:block; margin-bottom:4px;">📉 Bot Confusion / Fallback</strong>
                             <div style="font-size:12px; color:#cbd5e1;">${item.detail || 'Chatbot could not match question with knowledge base.'}</div>
                         </div>
                     `;
-                    } else if (item.type === 'bot_bounce') {
+                    } else if (t === 'bot_bounce') {
                         customBody = `
                         <div style="background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); border-radius:10px; padding:12px; margin-top:6px;">
                             <strong style="color:#f87171; font-size:12.5px; display:block; margin-bottom:4px;">👁️ Rapid Chatbot Bounce</strong>
                             <div style="font-size:12px; color:#cbd5e1;">${item.detail || 'Visitor opened chatbot widget and closed it immediately within 5 seconds.'}</div>
                         </div>
                     `;
-                    } else if (item.type === 'query' || item.type === 'message') {
-                        const queryClean = item.elementText || item.title.replace(/^Asked: "/, '').replace(/"$/, '');
+                    } else if (t === 'query' || t === 'message') {
+                        const queryClean = item.elementText || (item.title ? item.title.replace(/^Asked: "/i, '').replace(/"$/, '') : '') || item.detail || '';
                         let botAnswerClean = item.botReply || '';
                         if (!botAnswerClean && item.detail && !item.detail.toLowerCase().includes('user asked') && item.detail !== queryClean) {
                             botAnswerClean = item.detail.startsWith('Bot: ') ? item.detail.replace(/^Bot: "/, '').replace(/"$/, '') : item.detail;
@@ -4707,20 +4742,26 @@
                             </div>
                         ` : ''}
                     `;
-                    } else if (item.type === 'button_click') {
-                        const btnClean = item.elementText || item.title.replace(/^Clicked Button: "/, '').replace(/"$/, '');
+                    } else if (t === 'button_click' || t === 'click') {
+                        const rawBtn = item.elementText || (item.detail && item.detail !== 'click' ? item.detail : '') || (item.title && item.title !== 'click' && item.title !== 'Action' ? item.title : '') || 'Option Selected';
+                        const btnClean = String(rawBtn)
+                            .replace(/^Clicked Button:\s*"?/i, '')
+                            .replace(/"?$/, '')
+                            .replace(/^Button:\s*/i, '')
+                            .replace(/^Chip:\s*/i, '')
+                            .trim();
                         customBody = `
                         <div style="margin-top:6px;">
                             <div class="journey-button-pill">
-                                <span>🔘 Button: <strong>"${btnClean}"</strong></span>
+                                <span>🔘 Button: <strong>"${btnClean || 'Quick Action'}"</strong></span>
                             </div>
                             <div style="font-size:11px; color:var(--text-dim); margin-top:4px;">
                                 Triggered in: <span class="tag tag-amber" style="padding:1px 6px;">${item.location || 'Chatbot'}</span> · Page: <span style="font-family:'JetBrains Mono', monospace; color:#cbd5e1;">${item.url || '/'}</span>
                             </div>
                         </div>
                     `;
-                    } else if (item.type === 'link_click') {
-                        const linkTextClean = item.elementText || item.title.replace(/^Clicked Link: "/, '').replace(/"$/, '');
+                    } else if (t === 'link_click') {
+                        const linkTextClean = item.elementText || (item.title ? item.title.replace(/^Clicked Link: "/i, '').replace(/"$/, '') : '') || item.detail || 'Visited Link';
                         const targetUrl = item.targetUrl || item.url || '';
                         customBody = `
                         <div style="margin-top:6px;">
@@ -4729,12 +4770,14 @@
                                 <span>🔗 "${linkTextClean}"</span>
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                             </a>
+                            ${targetUrl ? `
                             <div style="background:rgba(10,15,29,0.7); padding:8px 12px; border-radius:8px; border:1px solid var(--border); font-family:'JetBrains Mono', monospace; font-size:11px; color:#38bdf8; margin-top:6px; word-break:break-all;">
                                 Destination ➔ ${targetUrl}
                             </div>
+                            ` : ''}
                         </div>
                     `;
-                    } else if (item.type === 'page_redirect') {
+                    } else if (t === 'page_redirect') {
                         const fromP = item.detail?.includes(' ➔ ') ? item.detail.split(' ➔ ')[0].replace(/^From /, '') : (item.url || '/');
                         const toP = item.targetUrl || (item.detail?.includes(' ➔ ') ? item.detail.split(' ➔ ')[1] : item.url);
                         customBody = `
@@ -4744,16 +4787,27 @@
                             <span style="font-family:'JetBrains Mono', monospace; color:#34d399; font-weight:700;">${toP}</span>
                         </div>
                     `;
-                    } else if (item.type === 'bot_close' || item.type === 'chat_end') {
+                    } else if (t === 'bot_close' || t === 'chat_close' || t === 'chat_end') {
                         customBody = `
                         <div style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); border-radius:10px; padding:12px; margin-top:6px;">
                             <strong style="color:#60a5fa; font-size:13px; display:block; margin-bottom:4px;">🏁 Closed Chat Window</strong>
                             <div style="font-size:12px; color:#cbd5e1;">${item.detail || 'Visitor closed chatbot widget.'}</div>
                         </div>
                     `;
-                    } else {
+                    } else if (t === 'page_land' || t === 'page_visit' || t === 'page_load') {
                         customBody = `
-                        <div style="font-size:12.5px; color:#cbd5e1; margin-top:4px;">${item.detail || item.title}</div>
+                        <div style="margin-top:6px;">
+                            <div style="font-size:13px; font-weight:700; color:#fff;">${item.title && item.title !== 'Action' ? item.title : ('Landed on ' + (item.url || '/'))}</div>
+                            <div style="font-size:11.5px; color:#94a3b8; margin-top:3px;">
+                                ${item.detail && item.detail !== 'click' ? item.detail : 'Visitor initial page entry'}
+                            </div>
+                            ${item.url ? `<div style="font-size:11px; color:var(--text-dim); margin-top:3px; font-family:'JetBrains Mono', monospace;">URL: ${item.url}</div>` : ''}
+                        </div>
+                    `;
+                    } else {
+                        const fallbackText = (item.detail && item.detail !== 'click') ? item.detail : ((item.title && item.title !== 'Action' && item.title !== 'click') ? item.title : 'User interaction performed');
+                        customBody = `
+                        <div style="font-size:12.5px; color:#cbd5e1; margin-top:4px;">${fallbackText}</div>
                         ${item.url ? `<div style="font-size:11px; color:var(--text-dim); margin-top:4px; font-family:'JetBrains Mono', monospace;">URL: ${item.url}</div>` : ''}
                     `;
                     }
@@ -4761,7 +4815,7 @@
                     return `
                     <div class="journey-card" id="journey-step-card-${idx}">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span class="journey-step-badge ${badgeClass}">${badgeIcon} Step ${item.step || (idx + 1)} · ${badgeLabel}</span>
+                            <span class="journey-step-badge ${badgeClass}">${badgeIcon} Step ${idx + 1} · ${badgeLabel}</span>
                             <span style="font-family:'JetBrains Mono', monospace; font-size:11px; color:var(--text-dim);">⏱ ${item.timeOffset || '+00:00'}</span>
                         </div>
                         ${customBody}
@@ -5044,24 +5098,38 @@
                 } else {
                     drawerSourceBadge = '<span class="tag" style="background:#1e293b; color:#94a3b8; border:1px solid #334155; font-size:10px; padding:2px 6px; border-radius:4px;">🌐 ' + (session.referrer || 'Direct') + '</span>';
                 }
+                const hasDrawerBotOpen = session.chatEngagement === 'conversed' || session.chatEngagement === 'opened_only' || !!session.botOpenedOnPage;
                 const triggerPageFinal = session.botOpenedOnPage || session.metrics?.bot_opened_on_page || session.entryPage || '/';
+                const openedMetaHtml = hasDrawerBotOpen
+                    ? `<span style="color:#38bdf8; font-family:'JetBrains Mono',monospace; font-weight:700;">📍 Opened on: <span style="background:rgba(56,189,248,0.18); border:1px solid rgba(56,189,248,0.4); padding:1px 6px; border-radius:4px; color:#fff;">${triggerPageFinal}</span></span>`
+                    : `<span style="color:#94a3b8; font-family:'JetBrains Mono',monospace; font-weight:600;">🌐 Landed: <span style="background:rgba(148,163,184,0.15); border:1px solid rgba(148,163,184,0.3); padding:1px 6px; border-radius:4px; color:#cbd5e1;">${session.entryPage || '/'}</span></span>`;
+
                 document.getElementById('drawerSessionMeta').innerHTML = `
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                         <span>${session.device?.type || 'Desktop'} · ${session.geo?.city || 'Bengaluru'}, ${session.geo?.country || 'India'}</span>
                         <span style="color:#64748b;">•</span>
                         ${drawerSourceBadge}
                         <span style="color:#64748b;">•</span>
-                        <span style="color:#38bdf8; font-family:'JetBrains Mono',monospace; font-weight:700;">📍 Opened on: <span style="background:rgba(56,189,248,0.18); border:1px solid rgba(56,189,248,0.4); padding:1px 6px; border-radius:4px; color:#fff;">${triggerPageFinal}</span></span>
+                        ${openedMetaHtml}
                     </div>
                 `;
 
                 const triggerPage = session.botOpenedOnPage || session.metrics?.bot_opened_on_page || session.metrics?.botOpenedOnPage || session.entryPage || '/';
 
                 // Tab 1: Render Visual Clickstream Journey Map
-                renderJourneyFlow(journey && journey.length ? journey : [
-                    { step: 1, type: 'page_land', title: `Landed on ${session.entryPage || '/'}`, detail: `Visitor started session from ${session.referrer || 'Direct'}`, timeOffset: '+00:00' },
-                    { step: 2, type: 'bot_open', title: `Opened RVCE Chatbot on ${triggerPage}`, detail: `Chat widget launched by visitor on ${triggerPage}`, timeOffset: '+00:02' }
-                ]);
+                const defaultFallbackSteps = [
+                    { step: 1, type: 'page_land', title: `Landed on ${session.entryPage || '/'}`, detail: `Visitor started session from ${session.referrer || 'Direct'}`, timeOffset: '+00:00' }
+                ];
+                if (hasDrawerBotOpen) {
+                    defaultFallbackSteps.push({
+                        step: 2,
+                        type: 'bot_open',
+                        title: `Opened RVCE Chatbot on ${triggerPage}`,
+                        detail: `Chat widget launched by visitor on ${triggerPage}`,
+                        timeOffset: '+00:02'
+                    });
+                }
+                renderJourneyFlow(journey && journey.length ? journey : defaultFallbackSteps);
 
                 // Tab 2: Render Visual Chat Dialogue
                 const chatWindow = document.getElementById('drawerChatWindow');
@@ -5115,10 +5183,10 @@
                     <div><strong>📺 Screen Resolution:</strong> ${session.device?.screen} (Viewport: ${session.device?.viewport})</div>
                     <div style="grid-column:span 2; background:rgba(99,102,241,0.15); border:1px solid rgba(99,102,241,0.35); border-radius:10px; padding:12px 16px; margin:4px 0;">
                         <div style="color:#818cf8; font-weight:800; font-size:13px; display:flex; align-items:center; gap:8px;">
-                            ?? Chatbot Trigger Webpage: <code style="background:rgba(0,0,0,0.4); padding:3px 8px; border-radius:6px; color:#38bdf8; font-size:13px;">${triggerPage}</code>
+                            ${hasDrawerBotOpen ? `📍 Chatbot Trigger Webpage: <code style="background:rgba(0,0,0,0.4); padding:3px 8px; border-radius:6px; color:#38bdf8; font-size:13px;">${triggerPage}</code>` : `🌐 Initial Landing Webpage: <code style="background:rgba(0,0,0,0.4); padding:3px 8px; border-radius:6px; color:#94a3b8; font-size:13px;">${session.entryPage || '/'}</code>`}
                         </div>
                         <div style="font-size:11.5px; color:var(--text-dim); margin-top:4px;">
-                            Exact webpage the visitor was browsing when they opened the chat widget (Arrived via: <strong>${session.referrer || 'Direct'}</strong>)
+                            ${hasDrawerBotOpen ? `Exact webpage the visitor was browsing when they opened the chat widget (Arrived via: <strong>${session.referrer || 'Direct'}</strong>)` : `Visitor browsed portal pages without launching the chatbot interface (Arrived via: <strong>${session.referrer || 'Direct'}</strong>)`}
                         </div>
                     </div>
                     <div><strong>⚡ Frustration Score:</strong> <span style="color:${(session.metrics?.frustrationScore || 0) > 40 ? '#ef4444' : '#10b981'}; font-weight:800;">${session.metrics?.frustrationScore || 0} / 100</span></div>
@@ -5263,6 +5331,14 @@
             }
 
             // --- Real-Time SSE Listener ---
+            let sseDebounceTimer = null;
+            function triggerLiveDebounceRefresh() {
+                if (sseDebounceTimer) clearTimeout(sseDebounceTimer);
+                sseDebounceTimer = setTimeout(() => {
+                    loadAllData();
+                }, 1500);
+            }
+
             function connectSSE() {
                 try {
                     const sseUrl = apiUrl('/api/dashboard/live/stream');
@@ -5278,10 +5354,8 @@
                                     ticker.innerHTML = `<strong>${d.city || 'Visitor'}</strong> · ${d.latestStep.title} <span style="color:#818cf8; font-family:'JetBrains Mono', monospace;">(${d.latestStep.timeOffset || 'Just now'})</span>`;
                                 }
                                 playPingSound();
-                                // Refresh counts
-                                const sVal = document.getElementById('statSessions');
-                                if (sVal) sVal.textContent = parseInt(sVal.textContent || '0') + 1;
-                            } else if (parsed.type === 'lead_update' || parsed.type === 'data_seeded') {
+                                triggerLiveDebounceRefresh();
+                            } else if (parsed.type === 'lead_update' || parsed.type === 'data_seeded' || parsed.type === 'data_deleted') {
                                 loadAllData();
                             }
                         } catch (e) { }

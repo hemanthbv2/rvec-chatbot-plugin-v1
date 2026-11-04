@@ -588,9 +588,9 @@ function rvce_chatbot_enqueue_assets() {
         true
     );
 
-    // Localize Script with Settings
+    // Localize Script with Settings on Telemetry (so both telemetry.js and script.js have it on initial run)
     wp_localize_script(
-        'rvce-chatbot-script',
+        'rvce-chatbot-telemetry',
         'rvceChatbotSettings',
         array(
             'logoUrl'         => esc_url($logo_url),
