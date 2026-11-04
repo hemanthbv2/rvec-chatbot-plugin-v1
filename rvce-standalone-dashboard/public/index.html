@@ -2476,6 +2476,11 @@
                             onclick="downloadActiveDrawerSession('csv')" title="Download session CSV">
                             📊 Export CSV
                         </button>
+                        <button class="btn"
+                            style="padding:6px 12px; font-size:12px; font-weight:700; background:rgba(239,68,68,0.2); border:1px solid rgba(239,68,68,0.4); color:#fca5a5;"
+                            onclick="deleteCurrentReplaySession()" title="Permanently delete this session">
+                            🗑️ Delete Session
+                        </button>
                         <button class="btn" style="padding:6px 12px; font-size:12px;" onclick="closeDrawerForce()">✕
                             Close</button>
                     </div>
@@ -4476,6 +4481,9 @@
                                 <button class="btn" style="padding:6px 9px; font-size:11px; font-weight:600; display:inline-flex; align-items:center; gap:4px; background:rgba(30,41,59,0.7); border:1px solid var(--border); color:#38bdf8;" onclick="downloadSingleSession('${s.sessionId}')" title="Download session JSON/CSV">
                                     📥 Save
                                 </button>
+                                <button class="btn" style="padding:6px 9px; font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:4px; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.35); color:#fca5a5;" onclick="deleteSingleSession('${s.sessionId}', event)" title="Permanently delete session">
+                                    🗑️
+                                </button>
                             </div>
                         </td>
                     </tr>
@@ -5443,12 +5451,49 @@
                         } catch (e) { }
                     }
 
-                    showToast('✅ Records successfully deleted!');
-                    closeDeleteModal();
-                    loadAllData();
+                    if (res && res.ok) {
+                        showToast(`✅ Records successfully deleted (${res.deletedSessionsCount || 0} sessions)!`);
+                        closeDeleteModal();
+                        await loadAllData();
+                    } else {
+                        showToast('❌ ' + (res?.error || 'Failed to delete records'));
+                    }
                 } catch (err) {
                     showToast('❌ Failed to delete records: ' + (err.message || 'Unknown error'));
                 }
+            }
+
+            async function deleteSingleSession(sessionId, event) {
+                if (event) event.stopPropagation();
+                if (!confirm(`Are you sure you want to permanently delete session "${sessionId}"?\n\nThis will remove its entire journey, conversation history, and telemetry across all databases.`)) {
+                    return;
+                }
+                try {
+                    const res = await fetchWithAuth('/api/dashboard/sessions/' + encodeURIComponent(sessionId), {
+                        method: 'DELETE'
+                    });
+                    if (res && res.ok) {
+                        showToast('✅ Session permanently deleted');
+                        if (Array.isArray(cachedSessions)) {
+                            cachedSessions = cachedSessions.filter(s => s.sessionId !== sessionId);
+                            renderSessionsTable(cachedSessions);
+                            renderTodayAccordion(cachedSessions);
+                            const elBadge = document.getElementById('sessionsNavBadge');
+                            if (elBadge) elBadge.textContent = cachedSessions.length;
+                        }
+                    } else {
+                        showToast('❌ Failed to delete session: ' + (res?.error || 'Server error'));
+                    }
+                } catch (e) {
+                    showToast('❌ Network error deleting session: ' + e.message);
+                }
+            }
+
+            async function deleteCurrentReplaySession() {
+                if (!activeDrawerSessionId) return;
+                const sid = activeDrawerSessionId;
+                closeDrawerForce();
+                await deleteSingleSession(sid);
             }
 
             // Keyboard Shortcuts

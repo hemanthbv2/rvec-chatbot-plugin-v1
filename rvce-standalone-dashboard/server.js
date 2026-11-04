@@ -114,7 +114,6 @@ let isMongoConnected = false;
 async function initMongo() {
     if (!MONGO_URI) {
         console.warn('⚠️ WARNING: MONGO_URI is not set in .env. Running seamlessly with in-memory resilient data store.');
-        seedMemoryStoreIfEmpty();
         return;
     }
     if (mongoose.connection.readyState === 1) {
@@ -137,7 +136,6 @@ async function initMongo() {
         isMongoConnecting = false;
         isMongoConnected = false;
         console.warn('⚠️ MongoDB connection deferred or unreachable (' + err.message + '). Active resilient store engaged.');
-        seedMemoryStoreIfEmpty();
     }
 }
 
@@ -301,8 +299,8 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
             events = req.body;
             sessionId = events[0]?.sessionId || events[0]?.s || sessionId;
         } else {
-            sessionId = body.sessionId || body.s || sessionId;
             events = body.events || body.logs || (body.q || body.eventType || body.t ? [body] : []);
+            sessionId = body.sessionId || body.s || events[0]?.sessionId || events[0]?.s || sessionId;
         }
 
         if (!events || events.length === 0) {
@@ -715,11 +713,7 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                             referrerDomain: rawReferrer ? (new URL(rawReferrer, 'https://rvce.edu.in').hostname) : 'direct',
                             utm: utmParams,
                             geo: geoInfo,
-                            device: deviceInfo,
-                            isBot: isBot,
-                            botName: botName,
-                            botCategory: botCategory,
-                            visitorType: visitorType
+                            device: deviceInfo
                         },
                         $set: {
                             lastActive: new Date(),
@@ -753,7 +747,7 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                         },
                         ...(leadDocs.length > 0 ? { isConvertedLead: true, leadSummary: leadDocs[0] } : {})
                     },
-                    { upsert: true, new: true }
+                    { upsert: true, returnDocument: 'after' }
                 );
             } catch (dbErr) {
                 console.warn('MongoDB session update note:', dbErr.message);
@@ -927,8 +921,17 @@ async function getUnifiedSessions(forceRefresh = false) {
 
     let sessions = [];
 
-    // 1. Try Supabase first if configured (has the full 3,100+ dataset)
-    if (supabase) {
+    // 1. Primary Source: MongoDB Atlas
+    if (isMongoConnected) {
+        try {
+            sessions = await Session.find({}).sort({ lastActive: -1 }).limit(500).maxTimeMS(3500).lean();
+        } catch (e) {
+            console.warn('MongoDB getUnifiedSessions note:', e.message);
+        }
+    }
+
+    // 2. Secondary/Dual Source: Supabase (if Mongo returned 0 or wasn't connected)
+    if (sessions.length === 0 && supabase) {
         try {
             const { data, error } = await supabase
                 .from('sessions')
@@ -995,15 +998,6 @@ async function getUnifiedSessions(forceRefresh = false) {
         }
     }
 
-    // 2. Fall back to MongoDB if Supabase returned 0 or wasn't reachable
-    if (sessions.length === 0 && isMongoConnected) {
-        try {
-            sessions = await Session.find({}).sort({ lastActive: -1 }).limit(500).maxTimeMS(2500).lean();
-        } catch (e) {
-            console.warn('MongoDB getUnifiedSessions note:', e.message);
-        }
-    }
-
     // 3. Fall back to or merge with in-memory store
     if (sessions.length === 0) {
         sessions = Array.from(memStore.sessions.values()).sort((a, b) => new Date(b.lastActive || b.startTime) - new Date(a.lastActive || a.startTime));
@@ -1036,7 +1030,18 @@ async function getUnifiedInteractions(sessionIds = null) {
 
     let interactions = [];
 
-    if (supabase) {
+    // 1. Primary Source: MongoDB Atlas
+    if (isMongoConnected) {
+        try {
+            const query = sessionIds ? { sessionId: { $in: sessionIds } } : {};
+            interactions = await Interaction.find(query).sort({ createdAt: -1 }).limit(1000).maxTimeMS(3500).lean();
+        } catch (e) {
+            console.warn('MongoDB getUnifiedInteractions note:', e.message);
+        }
+    }
+
+    // 2. Secondary/Dual Source: Supabase
+    if (interactions.length === 0 && supabase) {
         try {
             let query = supabase.from('interactions').select('*').order('created_at', { ascending: false }).limit(1000);
             if (sessionIds && sessionIds.length > 0) {
@@ -1072,15 +1077,6 @@ async function getUnifiedInteractions(sessionIds = null) {
             }
         } catch (e) {
             console.warn('Supabase getUnifiedInteractions note:', e.message);
-        }
-    }
-
-    if (interactions.length === 0 && isMongoConnected) {
-        try {
-            const query = sessionIds ? { sessionId: { $in: sessionIds } } : {};
-            interactions = await Interaction.find(query).sort({ createdAt: -1 }).limit(1000).maxTimeMS(2500).lean();
-        } catch (e) {
-            console.warn('MongoDB getUnifiedInteractions note:', e.message);
         }
     }
 
@@ -1876,9 +1872,16 @@ app.all(['/api/dashboard/records', '/api/dashboard/records/delete'], authenticat
 
             if (isMongoConnected) {
                 try {
-                    await Session.deleteMany({});
-                    await Interaction.deleteMany({});
-                    await Lead.deleteMany({});
+                    const sDel = await Session.deleteMany({});
+                    const iDel = await Interaction.deleteMany({});
+                    const lDel = await Lead.deleteMany({});
+                    try {
+                        if (mongoose.connection && mongoose.connection.db) {
+                            await mongoose.connection.db.collection('rawlogs').deleteMany({});
+                            await mongoose.connection.db.collection('chatlogs').deleteMany({});
+                        }
+                    } catch (rErr) { }
+                    deletedSessionsCount = Math.max(deletedSessionsCount, sDel.deletedCount || 0);
                 } catch (e) {
                     console.error('Mongo delete error:', e);
                 }
@@ -1912,8 +1915,19 @@ app.all(['/api/dashboard/records', '/api/dashboard/records/delete'], authenticat
                 try {
                     const startDay = new Date(date + 'T00:00:00.000Z');
                     const endDay = new Date(date + 'T23:59:59.999Z');
-                    await Session.deleteMany({ startTime: { $gte: startDay, $lte: endDay } });
-                    await Interaction.deleteMany({ timestamp: { $gte: startDay, $lte: endDay } });
+                    const sDel = await Session.deleteMany({
+                        $or: [
+                            { startTime: { $gte: startDay, $lte: endDay } },
+                            { createdAt: { $gte: startDay, $lte: endDay } }
+                        ]
+                    });
+                    await Interaction.deleteMany({
+                        $or: [
+                            { timestamp: { $gte: startDay, $lte: endDay } },
+                            { createdAt: { $gte: startDay, $lte: endDay } }
+                        ]
+                    });
+                    deletedSessionsCount = Math.max(deletedSessionsCount, sDel.deletedCount || 0);
                 } catch (e) { }
             }
 
@@ -1943,8 +1957,19 @@ app.all(['/api/dashboard/records', '/api/dashboard/records/delete'], authenticat
                     const [yyyy, mm] = month.split('-');
                     const startMonth = new Date(Date.UTC(parseInt(yyyy), parseInt(mm) - 1, 1));
                     const endMonth = new Date(Date.UTC(parseInt(yyyy), parseInt(mm), 0, 23, 59, 59, 999));
-                    await Session.deleteMany({ startTime: { $gte: startMonth, $lte: endMonth } });
-                    await Interaction.deleteMany({ timestamp: { $gte: startMonth, $lte: endMonth } });
+                    const sDel = await Session.deleteMany({
+                        $or: [
+                            { startTime: { $gte: startMonth, $lte: endMonth } },
+                            { createdAt: { $gte: startMonth, $lte: endMonth } }
+                        ]
+                    });
+                    await Interaction.deleteMany({
+                        $or: [
+                            { timestamp: { $gte: startMonth, $lte: endMonth } },
+                            { createdAt: { $gte: startMonth, $lte: endMonth } }
+                        ]
+                    });
+                    deletedSessionsCount = Math.max(deletedSessionsCount, sDel.deletedCount || 0);
                 } catch (e) { }
             }
 
@@ -2645,9 +2670,9 @@ app.post('/api/dashboard/clear', authenticateToken, async (req, res) => {
 // 10. DEMO SEEDER ROUTE (RICH JOURNEYS)
 // ==========================================
 function seedMemoryStoreIfEmpty() {
-    if (memStore.initialized || memStore.sessions.size > 0) return;
-    executeSeedData();
-    memStore.initialized = true;
+    // Disabled automatic mock data seeding to preserve pure production state.
+    // Demo data can be manually populated on demand via POST /api/demo/seed.
+    return;
 }
 
 function executeSeedData() {
@@ -2961,9 +2986,6 @@ app.post('/api/demo/seed', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
-// Seed memory store initially
-seedMemoryStoreIfEmpty();
 
 // SPA Fallback
 app.use((req, res) => {
