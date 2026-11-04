@@ -1241,8 +1241,8 @@ app.get('/api/dashboard/clarity', authenticateToken, async (req, res) => {
             else sentiments.Neutral++;
         });
 
-        if (Object.keys(entryPages).length === 0) entryPages['/'] = sessions.length || 1;
-        if (Object.keys(exitPages).length === 0) exitPages['/'] = sessions.length || 1;
+        if (sessions.length > 0 && Object.keys(entryPages).length === 0) entryPages['/'] = sessions.length;
+        if (sessions.length > 0 && Object.keys(exitPages).length === 0) exitPages['/'] = sessions.length;
 
         // 1. Top Clicked Outgoing Links
         const clickedLinksMap = new Map();

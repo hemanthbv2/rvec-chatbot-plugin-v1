@@ -1893,8 +1893,8 @@
                         <span style="font-size:16px;">👥</span>
                     </div>
                     <div style="font-size:26px; font-weight:800; color:#fff; margin-top:6px;" id="ovStatSessions">--</div>
-                    <div style="font-size:11px; color:#10b981; font-weight:600; margin-top:4px; display:flex; align-items:center; gap:4px;">
-                        <span>↑ 14.2%</span> <span style="color:#64748b; font-weight:400;">vs last week</span>
+                    <div style="font-size:11px; color:#10b981; font-weight:600; margin-top:4px; display:flex; align-items:center; gap:4px;" id="ovStatSessionsSub">
+                        <span>Total tracked sessions</span>
                     </div>
                 </div>
 
@@ -1925,7 +1925,7 @@
                         <span style="font-size:11px; text-transform:uppercase; color:#94a3b8; font-weight:700; letter-spacing:0.5px;">Sentiment Score</span>
                         <span style="font-size:16px;">⭐</span>
                     </div>
-                    <div style="font-size:26px; font-weight:800; color:#c084fc; margin-top:6px;" id="ovStatSentiment">91.4%</div>
+                    <div style="font-size:26px; font-weight:800; color:#c084fc; margin-top:6px;" id="ovStatSentiment">--</div>
                     <div style="font-size:11px; color:#d8b4fe; font-weight:600; margin-top:4px;">
                         Positive & Resolved
                     </div>
@@ -3133,11 +3133,18 @@
             function renderInteractionsChart(logs) {
                 const el = document.getElementById('topicChart');
                 if (!el) return;
+                if (topicChartInstRef) {
+                    topicChartInstRef.destroy();
+                    topicChartInstRef = null;
+                }
+                const ctx = el.getContext('2d');
+                ctx.clearRect(0, 0, el.width, el.height);
+                if (!logs || !logs.length) return;
+
                 const counts = {};
                 logs.forEach(l => { const t = classifyInteraction(l); if (t) counts[t] = (counts[t] || 0) + 1; });
                 const labels = Object.keys(counts).map(t => t.charAt(0).toUpperCase() + t.slice(1));
                 const colors = Object.keys(counts).map(t => (TOPICS[t] ? TOPICS[t].color : '#6366f1'));
-                if (topicChartInstRef) topicChartInstRef.destroy();
                 if (!labels.length) return;
                 topicChartInstRef = new Chart(el, {
                     type: 'doughnut',
@@ -3490,11 +3497,30 @@
             function renderActivityTrendChart(sessions) {
                 const canvas = document.getElementById('activityTrendChart');
                 if (!canvas) return;
-                if (activityTrendChartInst) activityTrendChartInst.destroy();
+                if (activityTrendChartInst) {
+                    activityTrendChartInst.destroy();
+                    activityTrendChartInst = null;
+                }
 
                 const hours = ['12 AM', '3 AM', '6 AM', '9 AM', '12 PM', '3 PM', '6 PM', '9 PM'];
-                const counts = [2, 1, 3, 12, 18, 24, 15, 8];
-                const turns = [1, 0, 2, 8, 14, 19, 11, 6];
+                const counts = [0, 0, 0, 0, 0, 0, 0, 0];
+                const turns = [0, 0, 0, 0, 0, 0, 0, 0];
+
+                if (Array.isArray(sessions) && sessions.length > 0) {
+                    sessions.forEach(s => {
+                        if (!s) return;
+                        const timeVal = s.startTime || s.createdAt;
+                        if (!timeVal) return;
+                        const d = new Date(timeVal);
+                        const h = d.getHours();
+                        const bucket = Math.floor(h / 3);
+                        if (bucket >= 0 && bucket < 8) {
+                            counts[bucket]++;
+                            const t = s.turns || (s.dialogue ? Math.ceil(s.dialogue.length / 2) : 0);
+                            turns[bucket] += (t || 0);
+                        }
+                    });
+                }
 
                 const ctx = canvas.getContext('2d');
                 activityTrendChartInst = new Chart(ctx, {
@@ -3532,7 +3558,7 @@
                         },
                         scales: {
                             x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-                            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } }
+                            y: { beginAtZero: true, suggestedMax: 5, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', stepSize: 1 } }
                         }
                     }
                 });
@@ -3579,25 +3605,46 @@
             }
 
             function renderOverviewAnalytics() {
-                if (cachedOverview) {
-                    const elOvSessions = document.getElementById('ovStatSessions');
-                    if (elOvSessions) elOvSessions.textContent = cachedOverview.totalSessions || 0;
+                const totalSessions = cachedOverview ? (cachedOverview.totalSessions || 0) : 0;
+                const totalInteractions = cachedOverview ? (cachedOverview.totalInteractions ?? 0) : 0;
+                const chatRate = cachedOverview ? String(cachedOverview.chatEngagementRate || 0).replace(/%+$/, '') : '0';
+                const frictionSessions = cachedOverview ? ((cachedOverview.rageClickSessions || 0) + (cachedOverview.deadClickSessions || 0)) : 0;
+                const humanCount = cachedOverview ? (cachedOverview.humanCount || 0) : 0;
+                const botCount = cachedOverview ? (cachedOverview.botCount || 0) : 0;
 
-                    const elOvInquiries = document.getElementById('ovStatInquiries');
-                    if (elOvInquiries) elOvInquiries.textContent = (cachedOverview.totalInteractions || 5995).toLocaleString();
+                const elOvSessions = document.getElementById('ovStatSessions');
+                if (elOvSessions) elOvSessions.textContent = totalSessions.toLocaleString();
 
-                    const elOvChatRate = document.getElementById('ovStatChatRate');
-                    if (elOvChatRate) elOvChatRate.textContent = `${String(cachedOverview.chatEngagementRate || 0).replace(/%+$/, '')}%`;
-
-                    const elOvSentiment = document.getElementById('ovStatSentiment');
-                    if (elOvSentiment) elOvSentiment.textContent = '91.4% Satisfied';
-
-                    const elOvFriction = document.getElementById('ovStatFriction');
-                    if (elOvFriction) elOvFriction.textContent = `${(cachedOverview.rageClickSessions || 0) + (cachedOverview.deadClickSessions || 0)} Sessions`;
-
-                    const elOvHumans = document.getElementById('ovStatHumans');
-                    if (elOvHumans) elOvHumans.textContent = `${cachedOverview.humanCount || 0} Humans · ${cachedOverview.botCount || 0} Crawlers`;
+                const elOvSessionsSub = document.getElementById('ovStatSessionsSub');
+                if (elOvSessionsSub) {
+                    elOvSessionsSub.innerHTML = totalSessions > 0 ? '<span style="color:#10b981; font-weight:600;">Active traffic</span> <span style="color:#64748b;">this cycle</span>' : '<span style="color:#64748b;">No active sessions</span>';
                 }
+
+                const elOvInquiries = document.getElementById('ovStatInquiries');
+                if (elOvInquiries) elOvInquiries.textContent = totalInteractions.toLocaleString();
+
+                const elOvChatRate = document.getElementById('ovStatChatRate');
+                if (elOvChatRate) elOvChatRate.textContent = `${chatRate}%`;
+
+                const elOvSentiment = document.getElementById('ovStatSentiment');
+                if (elOvSentiment) {
+                    if (totalSessions === 0) {
+                        elOvSentiment.textContent = '0% Satisfied';
+                    } else {
+                        const pos = cachedClarity?.sentiments?.Positive || 0;
+                        const neu = cachedClarity?.sentiments?.Neutral || 0;
+                        const fru = cachedClarity?.sentiments?.Frustrated || 0;
+                        const totalSent = pos + neu + fru;
+                        const pct = totalSent > 0 ? Math.round((pos / totalSent) * 100) : 100;
+                        elOvSentiment.textContent = `${pct}% Satisfied`;
+                    }
+                }
+
+                const elOvFriction = document.getElementById('ovStatFriction');
+                if (elOvFriction) elOvFriction.textContent = `${frictionSessions} Sessions`;
+
+                const elOvHumans = document.getElementById('ovStatHumans');
+                if (elOvHumans) elOvHumans.textContent = `${humanCount} Humans · ${botCount} Crawlers`;
 
                 if (cachedClarity) {
                     renderDeviceChart(cachedClarity.devices || {});
@@ -3608,6 +3655,15 @@
                     renderDeadHotspots(cachedClarity.deadHotspots || []);
                     renderClickedLinks(cachedClarity.clickedLinks || []);
                     renderClickedButtons(cachedClarity.clickedButtons || []);
+                } else {
+                    renderDeviceChart({});
+                    renderSentimentChart({});
+                    renderReferrers([]);
+                    renderGeos([]);
+                    renderRageHotspots([]);
+                    renderDeadHotspots([]);
+                    renderClickedLinks([]);
+                    renderClickedButtons([]);
                 }
 
                 renderActivityTrendChart(cachedSessions || []);
@@ -3919,7 +3975,7 @@
                     if (elSessionsBadge) elSessionsBadge.textContent = ov.totalSessions || 0;
 
                     const elTopicsQueries = document.getElementById('statTopicsTotalQueries');
-                    if (elTopicsQueries) elTopicsQueries.textContent = (ov.totalInteractions || 5995).toLocaleString();
+                    if (elTopicsQueries) elTopicsQueries.textContent = (ov.totalInteractions ?? 0).toLocaleString();
 
                     if (ov.segmentCounts) {
                         const elAll = document.getElementById('badgeSegAll');
@@ -3981,10 +4037,8 @@
                     loadBotMatrix();
                 }
 
-                const viewOv = document.getElementById('view-overview');
-                if (viewOv && viewOv.style.display !== 'none') {
-                    renderOverviewAnalytics();
-                }
+                // Always keep Overview KPIs refreshed so switching tabs is instant and accurate
+                renderOverviewAnalytics();
 
                 // Sync Interactions Telemetry
                 // interactions already fetched in parallel
@@ -4029,9 +4083,16 @@
             }
 
             function renderReferrers(referrers) {
-                if (!referrers.length) return;
-                if (referrerChartInst) referrerChartInst.destroy();
-                const cEl = document.getElementById('referrerChart'); if (!cEl) return; const ctx = cEl.getContext('2d');
+                const cEl = document.getElementById('referrerChart');
+                if (!cEl) return;
+                if (referrerChartInst) {
+                    referrerChartInst.destroy();
+                    referrerChartInst = null;
+                }
+                const ctx = cEl.getContext('2d');
+                ctx.clearRect(0, 0, cEl.width, cEl.height);
+                if (!referrers || !referrers.length) return;
+
                 referrerChartInst = new Chart(ctx, {
                     type: 'bar',
                     data: {
@@ -4048,7 +4109,7 @@
                         plugins: { legend: { display: false } },
                         scales: {
                             x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
-                            y: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+                            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8', stepSize: 1 } }
                         }
                     }
                 });
@@ -4056,7 +4117,7 @@
 
             function renderGeos(cities) {
                 const el = document.getElementById('geoList'); if (!el) return;
-                if (!cities.length) { el.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px;">No location telemetry</div>'; return; }
+                if (!cities || !cities.length) { el.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px;">No location telemetry</div>'; return; }
                 el.innerHTML = cities.map(([city, count]) => `
                 <div class="journey-item">
                     <span>📍 <strong>${city}</strong></span>
@@ -4066,14 +4127,23 @@
             }
 
             function renderDeviceChart(devices) {
-                if (deviceChartInst) deviceChartInst.destroy();
-                const cEl = document.getElementById('deviceChart'); if (!cEl) return; const ctx = cEl.getContext('2d');
+                const cEl = document.getElementById('deviceChart');
+                if (!cEl) return;
+                if (deviceChartInst) {
+                    deviceChartInst.destroy();
+                    deviceChartInst = null;
+                }
+                const ctx = cEl.getContext('2d');
+                ctx.clearRect(0, 0, cEl.width, cEl.height);
+                const dData = [devices?.Desktop || 0, devices?.Mobile || 0, devices?.Tablet || 0];
+                if (dData.every(c => c === 0)) return;
+
                 deviceChartInst = new Chart(ctx, {
                     type: 'doughnut',
                     data: {
                         labels: ['Desktop', 'Mobile', 'Tablet'],
                         datasets: [{
-                            data: [devices.Desktop || 0, devices.Mobile || 0, devices.Tablet || 0],
+                            data: dData,
                             backgroundColor: ['#6366f1', '#E31E24', '#10b981'],
                             borderWidth: 0
                         }]
@@ -4087,14 +4157,23 @@
             }
 
             function renderSentimentChart(s) {
-                if (sentimentChartInst) sentimentChartInst.destroy();
-                const cEl = document.getElementById('sentimentChart'); if (!cEl) return; const ctx = cEl.getContext('2d');
+                const cEl = document.getElementById('sentimentChart');
+                if (!cEl) return;
+                if (sentimentChartInst) {
+                    sentimentChartInst.destroy();
+                    sentimentChartInst = null;
+                }
+                const ctx = cEl.getContext('2d');
+                ctx.clearRect(0, 0, cEl.width, cEl.height);
+                const sData = [s?.Positive || 0, s?.Neutral || 0, s?.Frustrated || 0];
+                if (sData.every(c => c === 0)) return;
+
                 sentimentChartInst = new Chart(ctx, {
                     type: 'doughnut',
                     data: {
                         labels: ['Satisfied / Lead', 'Neutral', 'Frustrated / Rage'],
                         datasets: [{
-                            data: [s.Positive || 0, s.Neutral || 0, s.Frustrated || 0],
+                            data: sData,
                             backgroundColor: ['#10b981', '#6366f1', '#ef4444'],
                             borderWidth: 0
                         }]
@@ -4108,11 +4187,16 @@
             }
 
             function renderTopicChart(topics) {
-                if (!topics || !topics.length) return;
-                if (topicChartInst) topicChartInst.destroy();
                 const topicEl = document.getElementById('topicChart');
                 if (!topicEl) return;
+                if (topicChartInst) {
+                    topicChartInst.destroy();
+                    topicChartInst = null;
+                }
                 const ctx = topicEl.getContext('2d');
+                ctx.clearRect(0, 0, topicEl.width, topicEl.height);
+                if (!topics || !topics.length) return;
+
                 topicChartInst = new Chart(ctx, {
                     type: 'bar',
                     data: {
@@ -4129,7 +4213,7 @@
                         responsive: true, maintainAspectRatio: false,
                         plugins: { legend: { display: false } },
                         scales: {
-                            x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
+                            x: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94a3b8' } },
                             y: { grid: { display: false }, ticks: { color: '#fff', font: { size: 11, weight: 'bold' } } }
                         }
                     }
@@ -4137,7 +4221,7 @@
             }
 
             function renderRageHotspots(hotspots) {
-                const el = document.getElementById('rageHotspotList');
+                const el = document.getElementById('rageHotspotList') || document.getElementById('rageList');
                 if (!el) return;
                 if (!hotspots || !hotspots.length) {
                     el.innerHTML = '<div style="color:var(--text-dim);font-size:12.5px;padding:12px;">✅ Zero rage clicks detected. Visitors experiencing smooth navigation.</div>';
@@ -4191,7 +4275,7 @@
             }
 
             function renderClickedLinks(links) {
-                const el = document.getElementById('clickedLinksList');
+                const el = document.getElementById('clickedLinksList') || document.getElementById('linksList');
                 if (!el) return;
                 if (!links || !links.length) {
                     el.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px;">No clicked links recorded yet</div>';
@@ -4219,7 +4303,7 @@
             }
 
             function renderClickedButtons(buttons) {
-                const el = document.getElementById('clickedButtonsList');
+                const el = document.getElementById('clickedButtonsList') || document.getElementById('buttonsList');
                 if (!el) return;
                 if (!buttons || !buttons.length) {
                     el.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px;">No clicked buttons recorded yet</div>';
@@ -4314,7 +4398,7 @@
             }
 
             function renderDeadHotspots(deadHotspots) {
-                const el = document.getElementById('deadHotspotsList');
+                const el = document.getElementById('deadHotspotsList') || document.getElementById('deadList');
                 if (!el) return;
                 if (!deadHotspots || !deadHotspots.length) {
                     el.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:12px;">✅ No dead clicks detected on non-interactive bot elements.</div>';
@@ -4544,10 +4628,17 @@
             function renderBotRatioChart(stats) {
                 const ctx = document.getElementById('botRatioChart');
                 if (!ctx) return;
-                if (botRatioChartInst) botRatioChartInst.destroy();
+                if (botRatioChartInst) {
+                    botRatioChartInst.destroy();
+                    botRatioChartInst = null;
+                }
+                const cContext = ctx.getContext('2d');
+                cContext.clearRect(0, 0, ctx.width, ctx.height);
 
-                const humans = stats.humans || 1;
-                const bots = stats.bots || 0;
+                const humans = stats?.humans || 0;
+                const bots = stats?.bots || 0;
+                if (humans === 0 && bots === 0) return;
+
                 const searchCrawlers = Math.round(bots * 0.7);
                 const scrapers = Math.max(0, bots - searchCrawlers);
 
@@ -5473,6 +5564,10 @@
                     if (res && res.ok) {
                         showToast(`✅ Records successfully deleted (${res.deletedSessionsCount || 0} sessions)!`);
                         closeDeleteModal();
+                        cachedOverview = null;
+                        cachedClarity = null;
+                        cachedSessions = [];
+                        cachedInteractions = [];
                         try {
                             await loadAllData();
                         } catch (renderErr) {
@@ -5503,6 +5598,11 @@
                             renderTodayAccordion(cachedSessions);
                             const elBadge = document.getElementById('sessionsNavBadge');
                             if (elBadge) elBadge.textContent = cachedSessions.length;
+                        }
+                        try {
+                            await loadAllData();
+                        } catch (renderErr) {
+                            console.warn('Post-delete UI refresh error:', renderErr);
                         }
                     } else {
                         showToast('❌ Failed to delete session: ' + (res?.error || 'Server error'));
