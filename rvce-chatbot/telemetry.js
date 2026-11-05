@@ -81,6 +81,7 @@
         writeCookie(SESSION_COOKIE_NAME, sid);
         try {
             if (typeof window !== 'undefined') {
+                window.rvceSessionId = sid;
                 if (window.sessionStorage) {
                     window.sessionStorage.setItem('rvce_sid', sid);
                     window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ id: sid, lastActive: Date.now() }));
@@ -95,11 +96,18 @@
     function getOrCreateSessionId() {
         let sid = null;
 
+        // 0. Check global window session already initialized
+        if (typeof window !== 'undefined' && window.rvceSessionId && /^(sess_|sid_)[a-zA-Z0-9_-]+$/.test(window.rvceSessionId)) {
+            sid = window.rvceSessionId;
+            syncStorage(sid);
+            return sid;
+        }
+
         // 1. Cross-portal URL query parameter handoff (?rvce_sid=... or ?sid=...)
         try {
             const urlParams = new URLSearchParams(window.location.search);
             sid = urlParams.get('rvce_sid') || urlParams.get('sid');
-            if (sid && /^sess_[a-zA-Z0-9_-]+$/.test(sid)) {
+            if (sid && /^(sess_|sid_)[a-zA-Z0-9_-]+$/.test(sid)) {
                 syncStorage(sid);
                 // Clean up address bar quietly so URL remains clean
                 if (window.history && window.history.replaceState) {
@@ -114,7 +122,7 @@
 
         // 2. Shared Root Domain Cookie (.rvce.edu.in)
         const cookieSid = readCookie(SESSION_COOKIE_NAME);
-        if (cookieSid && /^sess_[a-zA-Z0-9_-]+$/.test(cookieSid)) {
+        if (cookieSid && /^(sess_|sid_)[a-zA-Z0-9_-]+$/.test(cookieSid)) {
             sid = cookieSid;
             syncStorage(sid);
             return sid;
@@ -135,14 +143,14 @@
                         }
                     }
                     const sessSid = window.sessionStorage.getItem('rvce_sid');
-                    if (sessSid && /^sess_[a-zA-Z0-9_-]+$/.test(sessSid)) {
+                    if (sessSid && /^(sess_|sid_)[a-zA-Z0-9_-]+$/.test(sessSid)) {
                         sid = sessSid;
                         syncStorage(sid);
                         return sid;
                     }
                 }
                 const localSid = window.localStorage.getItem('rvce_sid');
-                if (localSid && /^sess_[a-zA-Z0-9_-]+$/.test(localSid)) {
+                if (localSid && /^(sess_|sid_)[a-zA-Z0-9_-]+$/.test(localSid)) {
                     sid = localSid;
                     syncStorage(sid);
                     return sid;
@@ -163,9 +171,14 @@
     }
 
     const SESSION_ID = getOrCreateSessionId();
+    if (typeof window !== 'undefined') {
+        window.rvceSessionId = SESSION_ID;
+    }
     const PAGE_LOAD_TIME = Date.now();
     let telemetryQueue = [];
     let isFlushing = false;
+    let lastTrackedEventKey = '';
+    let lastTrackedEventTime = 0;
 
     // Helper to retrieve WordPress localized endpoints
     function getEndpoints() {
@@ -205,8 +218,20 @@
         return 'main';
     }
 
-    // Core event tracking dispatcher
+    // Core event tracking dispatcher with 800ms debounce idempotency
     function trackEvent(eventType, eventData = {}, immediate = false) {
+        // Client-side debounce on duplicate events fired in rapid succession
+        const eventText = String(eventData.buttonText || eventData.linkText || eventData.query || eventData.elementId || '').toLowerCase().trim();
+        const eventKey = `${eventType}:${eventText}`;
+        const now = Date.now();
+        if (eventText && eventKey === lastTrackedEventKey && (now - lastTrackedEventTime < 800)) {
+            return;
+        }
+        if (eventText) {
+            lastTrackedEventKey = eventKey;
+            lastTrackedEventTime = now;
+        }
+
         const subsite = getSubsite();
         const logEntry = {
             sessionId: SESSION_ID,
@@ -252,6 +277,7 @@
 
     // Track Button, Link & Chip Clicks inside Chatbot
     document.addEventListener('click', (e) => {
+        if (e._rvceClickTracked) return;
         const target = e.target;
         if (!target) return;
         const btn = target.closest('button') || target.closest('a') || target.closest('.suggestion-chip') || target.closest('.chip');
@@ -262,6 +288,7 @@
         const isTracked = btn.hasAttribute('data-rvce-track') || btn.classList.contains('suggestion-chip') || btn.classList.contains('chip');
 
         if (isChatbot || isTracked) {
+            e._rvceClickTracked = true;
             const isLink = btn.tagName.toLowerCase() === 'a' || btn.hasAttribute('href');
             const linkUrl = btn.href || btn.getAttribute('href') || '';
             const elementId = btn.id || btn.getAttribute('data-query') || btn.getAttribute('data-action') || btn.className || 'action_button';

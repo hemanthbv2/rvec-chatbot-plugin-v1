@@ -290,6 +290,73 @@ app.get('/api/dashboard/live/stream', (req, res) => {
 // ==========================================
 // 3. DETAILED CLARITY CLICKSTREAM & JOURNEY INGESTION
 // ==========================================
+
+// Rolling Idempotency & Deduplication Engine (TTL 2500ms)
+// Eliminates duplicate telemetry from overlapping browser listeners or twin client trackers.
+const recentEventsDedupeCache = new Map();
+const clientSessionBindings = new Map();
+
+function getCanonicalSessionId(rawSessionId, clientFingerprint) {
+    if (!clientFingerprint || !rawSessionId) return rawSessionId;
+    const now = Date.now();
+    const existing = clientSessionBindings.get(clientFingerprint);
+    if (existing && (now - existing.time < 30 * 60 * 1000)) {
+        // If incoming session is different (e.g. sid_ vs sess_rvce_), bind to the established one!
+        if (existing.sessionId !== rawSessionId) {
+            return existing.sessionId;
+        }
+        existing.time = now;
+        return existing.sessionId;
+    }
+    clientSessionBindings.set(clientFingerprint, { sessionId: rawSessionId, time: now });
+    if (clientSessionBindings.size > 2000) {
+        for (const [k, v] of clientSessionBindings.entries()) {
+            if (now - v.time > 1800000) clientSessionBindings.delete(k);
+        }
+    }
+    return rawSessionId;
+}
+
+function isDuplicateTelemetryEvent(sessionId, clientIp, eventType, text) {
+    const now = Date.now();
+    const cleanText = String(text || '').toLowerCase().trim();
+    if (!cleanText) return false;
+
+    // 1. Same-Session Event Throttle (2.5 seconds)
+    // Prevents double-firing listeners (e.g. act-btn + Button: Text 4ms apart)
+    const sessionKey = `${sessionId}:${eventType}:${cleanText}`;
+    if (recentEventsDedupeCache.has(sessionKey)) {
+        const prevTime = recentEventsDedupeCache.get(sessionKey);
+        if (now - prevTime < 2500) {
+            return true;
+        }
+    }
+    recentEventsDedupeCache.set(sessionKey, now);
+
+    // 2. Cross-Session / Dual-Tracker IP Deduplication (1.8 seconds)
+    // Prevents twin trackers (sess_rvce_... vs sid_...) from logging the same action twice
+    if (clientIp && (eventType === 'message' || eventType === 'button_click' || eventType === 'copy')) {
+        const ipKey = `${clientIp}:${eventType}:${cleanText}`;
+        if (recentEventsDedupeCache.has(ipKey)) {
+            const prevEntry = recentEventsDedupeCache.get(ipKey);
+            if (prevEntry && prevEntry.sessionId !== sessionId && (now - prevEntry.time < 1800)) {
+                return true;
+            }
+        }
+        recentEventsDedupeCache.set(ipKey, { sessionId, time: now });
+    }
+
+    // Periodic cleanup of cache to prevent memory leak
+    if (recentEventsDedupeCache.size > 5000) {
+        for (const [k, v] of recentEventsDedupeCache.entries()) {
+            const t = (typeof v === 'number') ? v : (v && v.time ? v.time : 0);
+            if (now - t > 10000) recentEventsDedupeCache.delete(k);
+        }
+    }
+
+    return false;
+}
+
 app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) => {
     try {
         let body = req.body || {};
@@ -309,6 +376,10 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
 
         // 1. Resolve Geo & Device
         const clientIp = extractClientIp(req);
+        const userAgent = String(req.headers['user-agent'] || '').slice(0, 80);
+        const clientFingerprint = clientIp ? `${clientIp}:${userAgent}` : '';
+        sessionId = getCanonicalSessionId(sessionId, clientFingerprint);
+
         const geoInfo = await resolveGeoLocation(req, clientIp);
         const firstMeta = events[0]?.metaData || events[0]?.data || events[0]?.m || {};
         const deviceInfo = parseDeviceEnvironment(req.headers['user-agent'], firstMeta.device || firstMeta.platform || events[0]?.screen);
@@ -361,6 +432,15 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
             if (eventType === 'dead_click') deadClicksCount++;
             if (eventType === 'bot_open' || eventType === 'chat_open') {
                 botOpenedOnPage = pagePath || meta.pagePath || (pageUrl ? new URL(pageUrl, 'https://rvce.edu.in').pathname : '/');
+            }
+
+            // Drop duplicate events within rolling debounce window (e.g. twin trackers or double-firing listeners)
+            const dedupeText = String(queryText || cleanBtn || linkUrl || linkText || interactionId || '').toLowerCase().trim();
+            const normalizedEventType = (eventType === 'click' ? 'button_click' : (eventType === 'page_load' ? 'page_land' : eventType));
+            if (eventType !== 'rage_click' && eventType !== 'typing_hesitation' && dedupeText) {
+                if (isDuplicateTelemetryEvent(sessionId, clientFingerprint || clientIp, normalizedEventType, dedupeText)) {
+                    continue;
+                }
             }
 
             // --- Construct Granular Journey Step ---
@@ -521,7 +601,6 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                 memStore.leads.set(leadDoc._id, leadDoc);
             }
 
-            const normalizedEventType = (eventType === 'click' ? 'button_click' : (eventType === 'page_load' ? 'page_land' : eventType));
             const interactionDoc = {
                 _id: 'int_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
                 sessionId: sessionId,
@@ -596,6 +675,11 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
         // Frustration Index (Rage Clicks, Dead Clicks, Bot Fallbacks, Typing Hesitations)
         const calculatedFrustration = Math.min(100, (rageClicksCount * 30) + (deadClicksCount * 15) + (fallbacksCount * 25) + (hesitationsCount * 10));
         const lastIntent = interactionDocs[interactionDocs.length - 1]?.interactionId || '';
+
+        // If all incoming events were identified as duplicate telemetry, return early safely
+        if (journeySteps.length === 0 && interactionDocs.length === 0 && leadDocs.length === 0) {
+            return res.json({ success: true, count: 0, deduplicated: true });
+        }
 
         // Memory Store Session Update
         if (!memSession) {
@@ -930,8 +1014,8 @@ async function getUnifiedSessions(forceRefresh = false) {
         }
     }
 
-    // 2. Secondary/Dual Source: Supabase (if Mongo returned 0 or wasn't connected)
-    if (sessions.length === 0 && supabase) {
+    // 2. Secondary/Dual Source: Supabase (ONLY queried if Mongo is down or disconnected)
+    if (sessions.length === 0 && supabase && !isMongoConnected) {
         try {
             const { data, error } = await supabase
                 .from('sessions')
@@ -1040,8 +1124,8 @@ async function getUnifiedInteractions(sessionIds = null) {
         }
     }
 
-    // 2. Secondary/Dual Source: Supabase
-    if (interactions.length === 0 && supabase) {
+    // 2. Secondary/Dual Source: Supabase (ONLY queried if Mongo is down or disconnected)
+    if (interactions.length === 0 && supabase && !isMongoConnected) {
         try {
             let query = supabase.from('interactions').select('*').order('created_at', { ascending: false }).limit(1000);
             if (sessionIds && sessionIds.length > 0) {
@@ -1986,10 +2070,109 @@ app.all(['/api/dashboard/records', '/api/dashboard/records/delete'], authenticat
         }
 
         invalidateStorageCache();
+        clientSessionBindings.clear();
+        recentEventsDedupeCache.clear();
         broadcastEvent('data_deleted', { type, date, month, deletedSessionsCount });
         res.json({ ok: true, message: `Successfully deleted records (${type})`, deletedSessionsCount });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// Administrative Deduplication Route - Purges redundant interactions and twin sessions from MongoDB
+app.all(['/api/dashboard/records/deduplicate'], authenticateToken, async (req, res) => {
+    try {
+        let removedInteractions = 0;
+        let removedSessions = 0;
+
+        if (isMongoConnected && mongoose.connection && mongoose.connection.db) {
+            const db = mongoose.connection.db;
+
+            // 1. Deduplicate interactions with identical (sessionId + eventType + queryText) within 5 seconds
+            const cursor = db.collection('interactions').find({}).sort({ sessionId: 1, createdAt: 1 });
+            const allInts = await cursor.toArray();
+            const toDeleteIds = [];
+            const seen = new Map();
+
+            for (const item of allInts) {
+                const sId = item.sessionId || '';
+                const evType = item.eventType || '';
+                const text = String(item.queryText || item.element?.elementText || item.element?.text || item.interactionId || '').toLowerCase().trim();
+                const key = `${sId}:${evType}:${text}`;
+                const itemTime = new Date(item.createdAt || item.timestamp || 0).getTime();
+
+                if (seen.has(key)) {
+                    const prevTime = seen.get(key);
+                    if (Math.abs(itemTime - prevTime) < 5000) {
+                        toDeleteIds.push(item._id);
+                        continue;
+                    }
+                }
+                seen.set(key, itemTime);
+            }
+
+            // 2. Remove generic click:act-btn when specific click:Button exists within 1 second
+            const clickSeen = new Map();
+            for (const item of allInts) {
+                if (item.eventType === 'button_click' || item.eventType === 'click') {
+                    const sId = item.sessionId || '';
+                    const intId = item.interactionId || '';
+                    const itemTime = new Date(item.createdAt || item.timestamp || 0).getTime();
+                    if (intId.includes('Button:') || intId.includes('Chip:')) {
+                        clickSeen.set(sId, itemTime);
+                    } else if (intId === 'click:act-btn' && clickSeen.has(sId)) {
+                        const prevTime = clickSeen.get(sId);
+                        if (Math.abs(itemTime - prevTime) < 1000) {
+                            toDeleteIds.push(item._id);
+                        }
+                    }
+                }
+            }
+
+            if (toDeleteIds.length > 0) {
+                const delRes = await db.collection('interactions').deleteMany({ _id: { $in: toDeleteIds } });
+                removedInteractions = delRes.deletedCount || toDeleteIds.length;
+            }
+
+            // 3. Remove orphan 0-turn sessions generated by reload loops (with 0 dialogue turns and no interactions)
+            const emptySessions = await db.collection('sessions').find({
+                $and: [
+                    { $or: [{ dialogue: { $size: 0 } }, { dialogue: { $exists: false } }, { messageCount: 0 }] },
+                    { $or: [{ clickCount: 0 }, { clickCount: { $exists: false } }] },
+                    { $or: [{ eventCount: 0 }, { eventCount: { $exists: false } }] }
+                ]
+            }).toArray();
+
+            const orphanSessionIds = [];
+            for (const s of emptySessions) {
+                const count = await db.collection('interactions').countDocuments({ sessionId: s.sessionId });
+                if (count === 0) {
+                    orphanSessionIds.push(s._id);
+                }
+            }
+
+            if (orphanSessionIds.length > 0) {
+                const delSess = await db.collection('sessions').deleteMany({ _id: { $in: orphanSessionIds } });
+                removedSessions = delSess.deletedCount || orphanSessionIds.length;
+            }
+        }
+
+        // Invalidate memory caches
+        memStore.interactions = [];
+        invalidateStorageCache();
+        clientSessionBindings.clear();
+        recentEventsDedupeCache.clear();
+        broadcastEvent('data_deleted', { type: 'deduplicate', removedInteractions, removedSessions });
+
+        res.json({
+            ok: true,
+            message: `Deduplication complete. Removed ${removedInteractions} duplicate interactions and ${removedSessions} orphan sessions.`,
+            removedInteractions,
+            removedSessions
+        });
+    } catch (err) {
+        console.error('Deduplication error:', err);
+        res.status(500).json({ ok: false, error: err.message });
     }
 });
 

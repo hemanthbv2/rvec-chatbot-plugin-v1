@@ -5003,6 +5003,12 @@ setTimeout(()=>{
     const botRoot = document.getElementById('rvce-chatbot-root');
     if (botRoot) {
         botRoot.addEventListener('click', (e) => {
+            if (e._rvceClickTracked) return;
+            // If telemetry.js is loaded, it manages unified click tracking to prevent twin events
+            if (typeof window.rvceTrackEvent === 'function') {
+                return;
+            }
+            e._rvceClickTracked = true;
             const target = e.target;
             if (!target) return;
             
