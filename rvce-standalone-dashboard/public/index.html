@@ -2315,9 +2315,23 @@
                             playback</div>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <!-- Date Filter Dropdown -->
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <label for="sessionDateFilter" style="font-size:11px; font-weight:700; color:var(--text-dim); text-transform:uppercase;">Date:</label>
+                            <select id="sessionDateFilter" onchange="changeSessionDateFilter(this.value)"
+                                style="padding:7px 12px; border-radius:9px; background:rgba(15,23,42,0.85); border:1px solid rgba(99,102,241,0.4); color:#c7d2fe; font-size:12px; font-weight:700; outline:none; cursor:pointer;">
+                                <option value="all">📅 All Dates (Historical)</option>
+                                <option value="today">Today</option>
+                                <option value="yesterday">Yesterday</option>
+                                <option value="custom">📅 Pick Date...</option>
+                            </select>
+                            <input type="date" id="sessionCustomDatePicker" onchange="changeSessionCustomDate(this.value)"
+                                style="display:none; padding:6px 10px; border-radius:8px; background:rgba(30,41,59,0.9); border:1px solid #818cf8; color:#fff; font-size:12px; outline:none; font-family:'JetBrains Mono',monospace;">
+                        </div>
+
                         <input type="text" id="sessionSearchInput" placeholder="🔍 Search city, session, query..."
                             oninput="handleSearchSessions(this.value)"
-                            style="padding:8px 14px; border-radius:9px; background:rgba(15,23,42,0.7); border:1px solid var(--border); color:#fff; font-size:12.5px; outline:none; width:220px;">
+                            style="padding:8px 14px; border-radius:9px; background:rgba(15,23,42,0.7); border:1px solid var(--border); color:#fff; font-size:12.5px; outline:none; width:200px;">
                         <button class="filter-pill active" onclick="filterSessions('all', this)">All</button>
                         <button class="filter-pill" onclick="filterSessions('rage', this)">⚡ Rage Clicks</button>
                         <button class="filter-pill" onclick="filterSessions('conversed', this)">💬 Conversed</button>
@@ -2350,6 +2364,27 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+
+                <!-- Pagination & Load More Controls -->
+                <div id="sessionsPaginationContainer" style="display:flex; justify-content:space-between; align-items:center; padding:12px 20px; background:rgba(15,23,42,0.85); border-top:1px solid rgba(255,255,255,0.06); border-radius:0 0 14px 14px; flex-wrap:wrap; gap:12px;">
+                    <div id="sessionsPaginationInfo" style="font-size:12px; color:var(--text-dim); font-weight:600;">
+                        Showing 0 sessions
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button class="btn btn-secondary" id="btnPrevSessions" onclick="navigateSessionsPage(-1)" style="padding:6px 12px; font-size:12px; cursor:pointer;" disabled>
+                            ◀ Previous
+                        </button>
+                        <span id="sessionsPageIndicator" style="font-size:12px; color:#fff; font-weight:700; padding:0 6px;">
+                            Page 1 of 1
+                        </span>
+                        <button class="btn btn-secondary" id="btnNextSessions" onclick="navigateSessionsPage(1)" style="padding:6px 12px; font-size:12px; cursor:pointer;" disabled>
+                            Next ▶
+                        </button>
+                        <button class="btn btn-primary" id="btnLoadMoreSessions" onclick="loadMoreSessions()" style="padding:6px 14px; font-size:12px; font-weight:700; margin-left:6px; background:linear-gradient(135deg,#4f46e5,#6366f1); display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
+                            ⬇ Load More Sessions
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -3919,10 +3954,11 @@
                 if (!checkAuth()) return;
 
                 // Fetch all endpoints concurrently in parallel for instant sub-second loading
+                const sessionsUrl = `/api/dashboard/sessions?segment=${currentSegment}&subsite=${currentSubsite}&limit=${SESSIONS_PER_PAGE}&page=1&date=${currentSessionDate}&paginate=true`;
                 const [ov, clarity, sessions, unanswered, interactions] = await Promise.all([
                     fetchWithAuth(`/api/dashboard/overview?segment=${currentSegment}`),
                     fetchWithAuth(`/api/dashboard/clarity?segment=${currentSegment}`),
-                    fetchWithAuth(`/api/dashboard/sessions?segment=${currentSegment}&subsite=${currentSubsite}&limit=80`),
+                    fetchWithAuth(sessionsUrl),
                     fetchWithAuth('/api/dashboard/unanswered'),
                     fetchWithAuth('/api/dashboard/interactions?limit=400')
                 ]);
@@ -4012,12 +4048,23 @@
                     renderTopicChart(clarity.topics || []);
                 }
 
-                // Sessions Explorer with Segment Filtering
+                // Sessions Explorer with Segment Filtering & Pagination
                 // sessions already fetched in parallel
                 if (sessions) {
-                    cachedSessions = sessions;
-                    renderSessionsTable(sessions);
-                    renderTodayAccordion(sessions);
+                    if (Array.isArray(sessions)) {
+                        cachedSessions = sessions;
+                        currentSessionTotalCount = sessions.length;
+                        currentSessionTotalPages = 1;
+                        currentSessionPage = 1;
+                    } else {
+                        cachedSessions = sessions.sessions || [];
+                        currentSessionTotalCount = sessions.totalCount !== undefined ? sessions.totalCount : cachedSessions.length;
+                        currentSessionPage = sessions.page || 1;
+                        currentSessionTotalPages = sessions.totalPages || Math.ceil(currentSessionTotalCount / SESSIONS_PER_PAGE) || 1;
+                    }
+                    renderSessionsTable(cachedSessions);
+                    renderTodayAccordion(cachedSessions);
+                    updateSessionsPaginationUI();
                 }
 
                 // Unanswered Queries
@@ -4417,11 +4464,12 @@
             `).join('');
             }
 
-            function renderSessionsTable(sessions) {
+            function renderSessionsTable(data) {
                 const tbody = document.getElementById('sessionsTableBody');
                 if (!tbody) return;
+                const sessions = Array.isArray(data) ? data : (data?.sessions || []);
                 if (!sessions || !sessions.length) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:30px;">No sessions found matching current filter. Try seeding demo data!</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:30px;">No sessions found matching current filter or date range.</td></tr>';
                     return;
                 }
                 tbody.innerHTML = sessions.map(s => {
@@ -4453,7 +4501,7 @@
                             ? `<span style="color:#f59e0b; font-style:italic;">👁️ Opened Chat (No Query)</span>`
                             : `<span style="color:#94a3b8; font-style:italic;">🌐 Browsed Site Pages</span>`);
 
-                    // Timing & Chat Lifecycle calculations
+                    // Timing & Chat Lifecycle calculations (Formatted with Date + Time for instant historical retention clarity)
                     const startDate = new Date(s.startTime || s.createdAt || Date.now());
                     const endDate = new Date(s.lastActive || s.updatedAt || s.startTime || Date.now());
                     const diffSec = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 1000));
@@ -4461,8 +4509,13 @@
                     const secs = diffSec % 60;
                     const durationStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 
-                    const startTimeStr = startDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-                    const endTimeStr = endDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+                    const datePart = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    const timePart = startDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+                    const startTimeStr = `${datePart}, ${timePart}`;
+
+                    const endDatePart = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                    const endTimePart = endDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+                    const endTimeStr = `${endDatePart}, ${endTimePart}`;
                     const exitPath = s.exitPage ? (new URL(s.exitPage, 'https://rvce.edu.in').pathname || '/') : entryPath;
                     const messageCount = s.dialogue?.length || s.metrics?.messageCount || (hasQuery ? 1 : 0);
 
@@ -5371,29 +5424,147 @@
                 showToast('📊 Exported sessions to Excel!');
             }
 
+            // --- Sessions Pagination, Date Range & Server Filtering ---
+            let currentSessionPage = 1;
+            let currentSessionTotalPages = 1;
+            let currentSessionTotalCount = 0;
+            let currentSessionDate = 'all';
+            let currentSessionFilterMode = 'all';
+            let currentSessionSearchQuery = '';
+            const SESSIONS_PER_PAGE = 50;
+
+            function updateSessionsPaginationUI() {
+                const infoEl = document.getElementById('sessionsPaginationInfo');
+                const pageEl = document.getElementById('sessionsPageIndicator');
+                const btnPrev = document.getElementById('btnPrevSessions');
+                const btnNext = document.getElementById('btnNextSessions');
+                const btnMore = document.getElementById('btnLoadMoreSessions');
+
+                const total = currentSessionTotalCount || (cachedSessions ? cachedSessions.length : 0);
+                const currentCount = cachedSessions ? cachedSessions.length : 0;
+
+                if (infoEl) {
+                    if (total === 0) {
+                        infoEl.textContent = 'Showing 0 sessions';
+                    } else {
+                        const start = ((currentSessionPage - 1) * SESSIONS_PER_PAGE) + 1;
+                        const end = Math.min(start + currentCount - 1, total);
+                        infoEl.textContent = `Showing ${currentCount > 0 ? (start <= end ? `${start}–${end}` : `1–${currentCount}`) : 0} of ${total.toLocaleString()} sessions`;
+                    }
+                }
+                if (pageEl) {
+                    pageEl.textContent = `Page ${currentSessionPage} of ${currentSessionTotalPages || 1}`;
+                }
+                if (btnPrev) {
+                    btnPrev.disabled = currentSessionPage <= 1;
+                }
+                if (btnNext) {
+                    btnNext.disabled = currentSessionPage >= currentSessionTotalPages;
+                }
+                if (btnMore) {
+                    btnMore.style.display = (currentSessionPage < currentSessionTotalPages) ? 'inline-flex' : 'none';
+                }
+            }
+
+            async function fetchSessionsPage(page = 1, append = false) {
+                currentSessionPage = page;
+                let url = `/api/dashboard/sessions?page=${page}&limit=${SESSIONS_PER_PAGE}&paginate=true`;
+                if (currentSegment && currentSegment !== 'all') url += `&segment=${currentSegment}`;
+                if (currentSubsite && currentSubsite !== 'all') url += `&subsite=${currentSubsite}`;
+                if (currentSessionDate && currentSessionDate !== 'all') url += `&date=${encodeURIComponent(currentSessionDate)}`;
+
+                if (currentSessionFilterMode === 'rage') url += '&filter=rage';
+                else if (currentSessionFilterMode === 'bots') url += '&segment=bots';
+                else if (currentSessionFilterMode === 'conversed') url += '&segment=conversed';
+                else if (currentSessionFilterMode === 'opened') url += '&segment=opened';
+                else if (currentSessionFilterMode === 'mobile') url += '&filter=mobile';
+                else if (currentSessionFilterMode === 'desktop') url += '&filter=desktop';
+
+                if (currentSessionSearchQuery) url += `&search=${encodeURIComponent(currentSessionSearchQuery)}`;
+
+                const res = await fetchWithAuth(url);
+                if (!res) return;
+
+                let newSessions = [];
+                if (Array.isArray(res)) {
+                    newSessions = res;
+                    currentSessionTotalCount = res.length;
+                    currentSessionTotalPages = 1;
+                } else {
+                    newSessions = res.sessions || [];
+                    currentSessionTotalCount = res.totalCount !== undefined ? res.totalCount : newSessions.length;
+                    currentSessionTotalPages = res.totalPages || Math.ceil(currentSessionTotalCount / SESSIONS_PER_PAGE) || 1;
+                    currentSessionPage = res.page || page;
+                }
+
+                if (append) {
+                    const existingIds = new Set((cachedSessions || []).map(s => s.sessionId));
+                    const uniqueNew = newSessions.filter(s => !existingIds.has(s.sessionId));
+                    cachedSessions = [...(cachedSessions || []), ...uniqueNew];
+                } else {
+                    cachedSessions = newSessions;
+                }
+
+                renderSessionsTable(cachedSessions);
+                updateSessionsPaginationUI();
+                const elBadge = document.getElementById('sessionsNavBadge');
+                if (elBadge) elBadge.textContent = currentSessionTotalCount || cachedSessions.length;
+            }
+
             async function filterSessions(mode, btnEl) {
                 document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
                 if (btnEl) btnEl.classList.add('active');
-
-                let url = `/api/dashboard/sessions?segment=${currentSegment}&limit=80`;
-                if (mode === 'rage') url += '&filter=rage';
-                else if (mode === 'bots') url = '/api/dashboard/sessions?segment=bots&limit=80';
-                else if (mode === 'conversed') url = '/api/dashboard/sessions?segment=conversed&limit=80';
-                else if (mode === 'opened') url = '/api/dashboard/sessions?segment=opened&limit=80';
-                else if (mode === 'mobile') url += '&filter=mobile';
-                else if (mode === 'desktop') url += '&filter=desktop';
-
-                const sessions = await fetchWithAuth(url);
-                if (sessions) renderSessionsTable(sessions);
+                currentSessionFilterMode = mode;
+                currentSessionPage = 1;
+                await fetchSessionsPage(1, false);
             }
 
-            async function handleSearchSessions(query) {
-                if (!query.trim()) {
-                    renderSessionsTable(cachedSessions);
+            let searchDebounceTimer = null;
+            function handleSearchSessions(query) {
+                clearTimeout(searchDebounceTimer);
+                searchDebounceTimer = setTimeout(async () => {
+                    currentSessionSearchQuery = (query || '').trim();
+                    currentSessionPage = 1;
+                    await fetchSessionsPage(1, false);
+                }, 300);
+            }
+
+            async function changeSessionDateFilter(val) {
+                const customInput = document.getElementById('sessionCustomDatePicker');
+                if (val === 'custom') {
+                    if (customInput) {
+                        customInput.style.display = 'inline-block';
+                        customInput.focus();
+                    }
                     return;
                 }
-                const filtered = await fetchWithAuth('/api/dashboard/sessions?search=' + encodeURIComponent(query));
-                if (filtered) renderSessionsTable(filtered);
+                if (customInput) customInput.style.display = 'none';
+                currentSessionDate = val;
+                currentSessionPage = 1;
+                await fetchSessionsPage(1, false);
+            }
+
+            async function changeSessionCustomDate(val) {
+                if (!val) return;
+                currentSessionDate = val;
+                currentSessionPage = 1;
+                await fetchSessionsPage(1, false);
+            }
+
+            async function navigateSessionsPage(delta) {
+                const targetPage = currentSessionPage + delta;
+                if (targetPage < 1 || targetPage > currentSessionTotalPages) return;
+                await fetchSessionsPage(targetPage, false);
+                const tableCard = document.getElementById('sessionsTableBody');
+                if (tableCard) tableCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+
+            async function loadMoreSessions() {
+                if (currentSessionPage >= currentSessionTotalPages) return;
+                const btnMore = document.getElementById('btnLoadMoreSessions');
+                if (btnMore) btnMore.textContent = '⏳ Loading...';
+                await fetchSessionsPage(currentSessionPage + 1, true);
+                if (btnMore) btnMore.innerHTML = '⬇ Load More Sessions';
             }
 
             function openIntegrationModal() {

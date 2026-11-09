@@ -1233,11 +1233,40 @@ app.get('/api/dashboard/overview', authenticateToken, async (req, res) => {
         const filteredSessionIds = new Set(filteredSessions.map(s => s.sessionId));
         const filteredInteractions = allInteractions.filter(i => filteredSessionIds.has(i.sessionId));
 
+        // When MongoDB is connected, use real aggregate counts across all historical documents
+        if (isMongoConnected) {
+            try {
+                const [dbSessionsCount, dbInteractionsCount, dbBotsCount, dbConversedCount] = await Promise.all([
+                    Session.countDocuments({}).maxTimeMS(2500),
+                    Interaction.countDocuments({}).maxTimeMS(2500),
+                    Session.countDocuments({ $or: [{ isBot: true }, { visitorType: 'bot' }, { 'device.isBot': true }] }).maxTimeMS(2500),
+                    Session.countDocuments({
+                        $or: [
+                            { messageCount: { $gt: 0 } },
+                            { chatEngagement: { $in: ['conversed', 'chat', 'chat_resolved'] } },
+                            { 'metrics.messageCount': { $gt: 0 } }
+                        ]
+                    }).maxTimeMS(2500)
+                ]);
+                countAll = dbSessionsCount;
+                countBots = dbBotsCount;
+                countUsers = Math.max(0, countAll - countBots);
+                countConversed = dbConversedCount;
+                totalInteractions = dbInteractionsCount;
+                if (segment === 'all') totalSessions = countAll;
+                else if (segment === 'users') totalSessions = countUsers;
+                else if (segment === 'conversed') totalSessions = countConversed;
+                else if (segment === 'bots') totalSessions = countBots;
+            } catch (cntErr) {
+                console.warn('Overview MongoDB counts note:', cntErr.message);
+            }
+        }
+
         const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000);
         let liveNow = filteredSessions.filter(s => new Date(s.lastActive || s.startTime) >= fifteenMinsAgo).length;
 
-        let totalSessions = filteredSessions.length;
-        let totalInteractions = filteredInteractions.length;
+        let totalSessionsVal = (segment === 'all' && isMongoConnected && countAll > 0) ? countAll : filteredSessions.length;
+        let totalInteractionsVal = (isMongoConnected && totalInteractions > 0) ? totalInteractions : filteredInteractions.length;
         let rageClickSessions = filteredSessions.filter(s => (s.metrics?.rageClicks > 0)).length;
         let deadClickSessions = filteredSessions.filter(s => (s.metrics?.deadClicks > 0)).length;
         let hesitationSessions = filteredSessions.filter(s => (s.metrics?.hesitationCount > 0)).length;
@@ -1248,7 +1277,7 @@ app.get('/api/dashboard/overview', authenticateToken, async (req, res) => {
         let desktopCount = filteredSessions.filter(s => s.device?.type === 'Desktop').length;
 
         let totalFrustrationSum = filteredSessions.reduce((acc, s) => acc + (s.metrics?.frustrationScore || 0), 0);
-        let avgFrustration = totalSessions > 0 ? Math.round(totalFrustrationSum / totalSessions) : 0;
+        let avgFrustration = filteredSessions.length > 0 ? Math.round(totalFrustrationSum / filteredSessions.length) : 0;
         let chatEngagementRate = countUsers > 0 ? ((countConversed / countUsers) * 100).toFixed(1) : '0';
         let botRatio = countAll > 0 ? ((countBots / countAll) * 100).toFixed(1) : '0';
 
@@ -1261,8 +1290,8 @@ app.get('/api/dashboard/overview', authenticateToken, async (req, res) => {
                 opened: countOpened,
                 bots: countBots
             },
-            totalSessions,
-            totalInteractions,
+            totalSessions: totalSessionsVal,
+            totalInteractions: totalInteractionsVal,
             activeConversations: countConversed,
             openedOnly: countOpened,
             botCount: countBots,
@@ -1545,41 +1574,184 @@ app.get('/api/dashboard/bots', authenticateToken, async (req, res) => {
     }
 });
 
-// Sessions List (Enriched with Last Query, Clicked Buttons/Links, and Journey Route)
+// Sessions List (Enriched with Last Query, Clicked Buttons/Links, and Journey Route) - Supports Date Filtering & Server-Side Pagination
 app.get('/api/dashboard/sessions', authenticateToken, async (req, res) => {
     try {
-        const { filter, search, limit, segment, subsite } = req.query;
-        const queryLimit = Math.min(parseInt(limit) || 100, 300);
-        let list = await getUnifiedSessions();
+        const { filter, search, limit, segment, subsite, date, page, paginate } = req.query;
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const pageSize = Math.min(Math.max(10, parseInt(limit) || 50), 200);
+        const skip = (pageNum - 1) * pageSize;
+        const isPaginatedRequest = paginate === 'true' || page !== undefined || (date !== undefined && date !== 'all');
 
-        if (subsite && subsite !== 'all') {
-            const subLow = String(subsite).toLowerCase();
-            list = list.filter(s => {
-                const sSub = String(s.subsite || 'main').toLowerCase();
-                const touched = Array.isArray(s.subsitesTouched) ? s.subsitesTouched.map(x => String(x).toLowerCase()) : [sSub];
-                const journeyTouched = Array.isArray(s.journey) && s.journey.some(j => String(j.subsite || '').toLowerCase() === subLow);
-                return sSub === subLow || touched.includes(subLow) || journeyTouched;
-            });
+        let rawSessions = [];
+        let totalCount = 0;
+
+        if (isMongoConnected) {
+            try {
+                const queryConds = [];
+
+                // 1. Date filter (IST calendar day aligned)
+                if (date && date !== 'all') {
+                    let targetDateStr = date;
+                    if (date === 'today') {
+                        const now = new Date();
+                        const year = now.getFullYear();
+                        const month = String(now.getMonth() + 1).padStart(2, '0');
+                        const day = String(now.getDate()).padStart(2, '0');
+                        targetDateStr = `${year}-${month}-${day}`;
+                    } else if (date === 'yesterday') {
+                        const y = new Date();
+                        y.setDate(y.getDate() - 1);
+                        const year = y.getFullYear();
+                        const month = String(y.getMonth() + 1).padStart(2, '0');
+                        const day = String(y.getDate()).padStart(2, '0');
+                        targetDateStr = `${year}-${month}-${day}`;
+                    }
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(targetDateStr)) {
+                        const dayStart = new Date(targetDateStr + 'T00:00:00+05:30');
+                        const dayEnd = new Date(targetDateStr + 'T23:59:59.999+05:30');
+                        queryConds.push({
+                            $or: [
+                                { startTime: { $gte: dayStart, $lte: dayEnd } },
+                                { createdAt: { $gte: dayStart, $lte: dayEnd } },
+                                { lastActive: { $gte: dayStart, $lte: dayEnd } }
+                            ]
+                        });
+                    }
+                }
+
+                // 2. Subsite filter
+                if (subsite && subsite !== 'all') {
+                    const subLow = String(subsite).toLowerCase();
+                    queryConds.push({
+                        $or: [
+                            { subsite: subLow },
+                            { subsitesTouched: subLow }
+                        ]
+                    });
+                }
+
+                // 3. Traffic segment filter
+                if (segment === 'conversed') {
+                    queryConds.push({
+                        $or: [
+                            { messageCount: { $gt: 0 } },
+                            { chatEngagement: { $in: ['conversed', 'chat', 'chat_resolved'] } },
+                            { 'metrics.messageCount': { $gt: 0 } },
+                            { lastQuery: { $exists: true, $nin: ['', null, 'Browsed Admissions Portal', 'Browsed Website'] } }
+                        ]
+                    });
+                } else if (segment === 'opened') {
+                    queryConds.push({
+                        $or: [
+                            { chatEngagement: 'opened_only' },
+                            { botOpenedOnPage: { $exists: true, $ne: '' } },
+                            { 'metrics.botOpenedOnPage': { $exists: true, $ne: '' } }
+                        ]
+                    });
+                } else if (segment === 'bots') {
+                    queryConds.push({
+                        $or: [
+                            { isBot: true },
+                            { visitorType: 'bot' },
+                            { 'device.isBot': true }
+                        ]
+                    });
+                } else if (segment === 'users') {
+                    queryConds.push({
+                        isBot: { $ne: true },
+                        visitorType: { $ne: 'bot' },
+                        'device.isBot': { $ne: true }
+                    });
+                }
+
+                // 4. Quick filter (rage, mobile, desktop)
+                if (filter === 'rage') {
+                    queryConds.push({
+                        $or: [
+                            { 'metrics.rageClicks': { $gt: 0 } },
+                            { 'metrics.rage_clicks': { $gt: 0 } }
+                        ]
+                    });
+                } else if (filter === 'mobile') {
+                    queryConds.push({ 'device.type': 'Mobile' });
+                } else if (filter === 'desktop') {
+                    queryConds.push({ 'device.type': { $ne: 'Mobile' } });
+                }
+
+                // 5. Keyword search filter
+                if (search && search.trim()) {
+                    const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+                    queryConds.push({
+                        $or: [
+                            { sessionId: regex },
+                            { 'geo.city': regex },
+                            { entryPage: regex },
+                            { exitPage: regex },
+                            { lastQuery: regex }
+                        ]
+                    });
+                }
+
+                const finalFilter = queryConds.length > 0 ? { $and: queryConds } : {};
+                totalCount = await Session.countDocuments(finalFilter).maxTimeMS(3500);
+
+                rawSessions = await Session.find(finalFilter)
+                    .sort({ lastActive: -1, startTime: -1, createdAt: -1 })
+                    .skip(skip)
+                    .limit(pageSize)
+                    .maxTimeMS(3500)
+                    .lean();
+            } catch (mongoErr) {
+                console.warn('MongoDB direct sessions query note:', mongoErr.message);
+                rawSessions = [];
+            }
         }
 
-        if (segment && segment !== 'all') {
-            list = list.filter(s => filterSessionBySegment(s, segment));
+        // Fallback to in-memory/unified resolver if Mongo returned nothing or was disconnected
+        if (rawSessions.length === 0 && !isMongoConnected) {
+            let list = await getUnifiedSessions();
+            if (date && date !== 'all') {
+                let targetDateStr = date;
+                if (date === 'today') {
+                    targetDateStr = new Date().toISOString().slice(0, 10);
+                } else if (date === 'yesterday') {
+                    const y = new Date();
+                    y.setDate(y.getDate() - 1);
+                    targetDateStr = y.toISOString().slice(0, 10);
+                }
+                list = list.filter(s => {
+                    const d = new Date(s.startTime || s.createdAt || Date.now()).toISOString().slice(0, 10);
+                    return d === targetDateStr;
+                });
+            }
+            if (subsite && subsite !== 'all') {
+                const subLow = String(subsite).toLowerCase();
+                list = list.filter(s => {
+                    const sSub = String(s.subsite || 'main').toLowerCase();
+                    const touched = Array.isArray(s.subsitesTouched) ? s.subsitesTouched.map(x => String(x).toLowerCase()) : [sSub];
+                    return sSub === subLow || touched.includes(subLow);
+                });
+            }
+            if (segment && segment !== 'all') {
+                list = list.filter(s => filterSessionBySegment(s, segment));
+            }
+            if (filter === 'rage') list = list.filter(s => (s.metrics?.rageClicks > 0 || s.metrics?.rage_clicks > 0));
+            if (filter === 'mobile') list = list.filter(s => s.device?.type === 'Mobile');
+            if (filter === 'desktop') list = list.filter(s => s.device?.type === 'Desktop');
+            if (search) {
+                const sLow = search.toLowerCase();
+                list = list.filter(s =>
+                    (s.sessionId && s.sessionId.toLowerCase().includes(sLow)) ||
+                    (s.geo?.city && s.geo.city.toLowerCase().includes(sLow)) ||
+                    (s.entryPage && s.entryPage.toLowerCase().includes(sLow)) ||
+                    (s.exitPage && s.exitPage.toLowerCase().includes(sLow))
+                );
+            }
+            totalCount = list.length;
+            rawSessions = list.slice(skip, skip + pageSize);
         }
-        if (filter === 'rage') list = list.filter(s => (s.metrics?.rageClicks > 0 || s.metrics?.rage_clicks > 0));
-        if (filter === 'mobile') list = list.filter(s => s.device?.type === 'Mobile');
-        if (filter === 'desktop') list = list.filter(s => s.device?.type === 'Desktop');
 
-        if (search) {
-            const sLow = search.toLowerCase();
-            list = list.filter(s =>
-                (s.sessionId && s.sessionId.toLowerCase().includes(sLow)) ||
-                (s.geo?.city && s.geo.city.toLowerCase().includes(sLow)) ||
-                (s.entryPage && s.entryPage.toLowerCase().includes(sLow)) ||
-                (s.exitPage && s.exitPage.toLowerCase().includes(sLow))
-            );
-        }
-
-        const rawSessions = list.slice(0, queryLimit);
         const sessionIds = rawSessions.map(s => s.sessionId);
         const interactionsForSessions = await getUnifiedInteractions(sessionIds);
 
@@ -1639,6 +1811,22 @@ app.get('/api/dashboard/sessions', authenticateToken, async (req, res) => {
                 navigationRoute: routeSet.join(' ➔ ') || '/'
             };
         });
+
+        res.setHeader('X-Total-Count', totalCount);
+        res.setHeader('X-Page', pageNum);
+        res.setHeader('X-Total-Pages', Math.ceil(totalCount / pageSize) || 1);
+
+        if (isPaginatedRequest) {
+            return res.json({
+                ok: true,
+                sessions: enrichedSessions,
+                totalCount,
+                page: pageNum,
+                pageSize,
+                totalPages: Math.ceil(totalCount / pageSize) || 1,
+                hasMore: skip + enrichedSessions.length < totalCount
+            });
+        }
 
         res.json(enrichedSessions);
     } catch (err) {
