@@ -1530,12 +1530,12 @@ const QA = [
     {k:['vision','mission','motto','college vision','rvce vision'],id:'vision',p:1},
     {k:['principal','principal name','who is principal','head of institution','director of rvce','who is the principal','about principal','tell me about principal','princi','whos the princi'],id:'principal',p:1},
     {k:['vice principal','vp','vice-principal','who is vice principal','about vice principal','tell me about vice principal','dr k s geetha','geetha mam'],id:'vice_principal',p:1},
-    {k:['hod','head of department','dean','deans','faculty','teachers','professors','who is the hod','list of hods','hods','who is hod','department head','heads','teaching staff'],id:'faculty',p:1.5},
+    {k:['hod','head of department','dean','deans','faculty','teachers','professors','who is the hod','who is hod','department head','heads','teaching staff'],id:'faculty',p:1.5},
     {k:['deans list','all deans','dean list','executive committee','key executives'],id:'deans_list',p:1},
     {k:['dean academics','academic dean','dean of academics','who is dean academics'],id:'dean_academics',p:0.5},
     {k:['dean student affairs','student affairs dean','dean of student affairs','who is dean student affairs'],id:'dean_student_affairs',p:0.5},
     {k:['dean rnd','dean r and d','dean research','dean of research','who is dean research','research dean'],id:'dean_rnd',p:0.5},
-    {k:['hods list','list of hods','all hods','hod list','head of departments','all heads'],id:'hods_list',p:1},
+    {k:['hods list','list of hods','all hods','hod list','head of departments','all heads','hods','list of all hods','all hods list','all department heads'],id:'hods_list',p:0.8},
     {k:['coe','coes','centres of excellence','centers of excellence','coe list','research centres','research centers','innovation hubs','all coes','list of coes'],id:'centres_of_excellence',p:1},
     // Specific COE search intents (higher priority for specific names)
     {k:['coe mfc','mfc coe','materials fabrication coe','materials fabrication characterization','coe-mfc','fabrication characterization'],id:'coe_mfc',p:0.5},
@@ -1689,6 +1689,19 @@ allBranches.forEach(branch => {
     if (branchCode === 'me') kws.push('mechanical hod', 'mech hod', 'hod mech', 'hod mechanical', 'head of mechanical', 'head of mech', 'who is the hod of mechanical', 'who is the hod of mech', 'who is hod of mech', 'who is hod of mechanical');
     if (branchCode === 'cv') kws.push('civil hod', 'hod civil', 'head of civil');
     if (branchCode === 'is') kws.push('information science hod', 'ise hod', 'hod ise', 'head of ise', 'head of information science', 'who is the hod of ise');
+    if (branchCode === 'aiml') {
+        kws.push(
+            'aiml hod', 'hod aiml', 'who is hod of aiml', 'who is the hod of aiml', 'head of aiml', 'who is head of aiml',
+            'aiml program coordinator', 'program coordinator aiml', 'who is program coordinator of aiml', 'who is the program coordinator of aiml',
+            'aiml coordinator', 'coordinator of aiml', 'program coordinator of aiml', 'coordinator aiml', 'who is coordinator of aiml',
+            'artificial intelligence hod', 'hod artificial intelligence', 'who is hod of artificial intelligence', 'who is the hod of artificial intelligence',
+            'head of artificial intelligence', 'who is head of artificial intelligence',
+            'artificial intelligence program coordinator', 'program coordinator artificial intelligence',
+            'who is program coordinator of artificial intelligence', 'who is the program coordinator of artificial intelligence',
+            'artificial intelligence coordinator', 'coordinator of artificial intelligence', 'coordinator artificial intelligence',
+            'ai program coordinator', 'program coordinator ai', 'coordinator of ai', 'coordinator ai'
+        );
+    }
 
     branchHodIntents.push({ k: kws, id: `hod_${branchCode}`, p: 0.5 });
 });
@@ -2308,7 +2321,7 @@ function classifyIntent(input) {
     if (typeof SESSION !== 'undefined' && SESSION.lastIntent && SESSION.lastIntent.startsWith('dept_')) {
         const hasTopic = contextualTopics.some(t => cleanInput.includes(t));
         const hasDeptMention = cleanInput.match(/\b(cse|cs|ece|ec|mech|civil|aiml|ai|ml|ise|eee|ee|biotech|bt|chemical|ch|cv|aerospace|ae|eie|ei|ete|et|mca|csds|cscy)\b/i);
-        const hasGlobalRole = cleanInput.match(/director|dean|officer|principal|vice principal|incharge|head of placement/i);
+        const hasGlobalRole = cleanInput.match(/director|dean|officer|principal|vice principal|incharge|head of placement|list of hod|all hod|hods list|all head|all deans/i);
         if (hasTopic && !hasDeptMention && !hasGlobalRole) {
             const branchCode = SESSION.lastIntent.replace('dept_', '');
             cleanInput += ` ${branchCode}`;
@@ -2416,7 +2429,7 @@ function classifyIntent(input) {
 
     // Composite Intent Resolution: Combine Department + Topic (e.g., CSE + Placements)
     let isComposite = false;
-    if (matchedIntents.length > 1) {
+    if (matchedIntents.length >= 1) {
         const matchedIds = matchedIntents.map(q => q.id);
         // Prioritize specific composite matches if already found before overriding
         const existingComposite = matchedIds.find(id => id.startsWith('plcmt_') || id.startsWith('hod_'));
@@ -2436,7 +2449,7 @@ function classifyIntent(input) {
                 } else if (matchedIds.includes('career_options_menu') || cleanInput.includes('career') || cleanInput.includes('jobs') || cleanInput.includes('future')) {
                     best = `career_${branchCode}`;
                     isComposite = true;
-                } else if (matchedIds.includes('hods_list') || matchedIds.includes('faculty') || cleanInput.includes('hod')) {
+                } else if (matchedIds.includes('hods_list') || matchedIds.includes('faculty') || cleanInput.includes('hod') || cleanInput.includes('coordinator') || cleanInput.includes('head')) {
                     best = `hod_${branchCode}`;
                     isComposite = true;
                 } else if (matchedIds.includes('syllabus_1st_sem') || cleanInput.includes('syllabus') || cleanInput.includes('labs')) {
@@ -3218,7 +3231,7 @@ function getResponse(id) {
         r.buttons = [{l:'Official Website 🌐',u:'https://rvce.edu.in/research_consulting/',i:'🌐'}, {l:'Research & R&D 🔬',a:'research',i:'🔬'}, {l:'All Deans 🎓',a:'deans_list',i:'👨‍🏫'}]; break;
     case 'hods_list':
         r.text += T("Here are the Heads of Departments (HODs): 📚\n\n","RVCE Head of Departments:\n\n");
-        r.text += "• **CSE:** Dr. Shanta Rangaswamy\n• **AIML:** To Be Appointed\n• **ISE:** Dr. Mamatha G S\n• **ECE:** Dr. Ravish Aradhya H V\n• **Mechanical:** Dr. Shanmukha Nagaraj\n• **Civil:** Dr. Anjaneyappa\n• **EEE:** Dr. J N Hemalatha (I/c)\n• **Aerospace:** [Dr. Supreeth R](https://rvce.edu.in/department/ae/dr_r_supreeth/)\n• **Biotech:** Dr. Nagashree N Rao\n• **Chemical:** Dr. Jagadish H Patil\n• **EIE:** Dr. CH. Renumadhavi\n• **ETE:** Dr. Nagamani K\n• **IEM:** Dr. Rajeswara Rao K V S\n• **MCA:** Dr. Jasmine K S\n• **Physics:** Dr. G. Shireesha\n• **Maths:** Dr. Jayalatha G\n• **Chemistry:** Dr. Mahesh R";
+        r.text += "• **CSE:** Dr. Shanta Rangaswamy\n• **AIML:** [Dr. Deepamala N (Program Coordinator)](https://rvce.edu.in/department/cse/dr_deepamala_n/)\n• **ISE:** Dr. Mamatha G S\n• **ECE:** Dr. Ravish Aradhya H V\n• **Mechanical:** Dr. Shanmukha Nagaraj\n• **Civil:** Dr. Anjaneyappa\n• **EEE:** Dr. J N Hemalatha (I/c)\n• **Aerospace:** [Dr. Supreeth R](https://rvce.edu.in/department/ae/dr_r_supreeth/)\n• **Biotech:** Dr. Nagashree N Rao\n• **Chemical:** Dr. Jagadish H Patil\n• **EIE:** Dr. CH. Renumadhavi\n• **ETE:** Dr. Nagamani K\n• **IEM:** Dr. Rajeswara Rao K V S\n• **MCA:** Dr. Jasmine K S\n• **Physics:** Dr. G. Shireesha\n• **Maths:** Dr. Jayalatha G\n• **Chemistry:** Dr. Mahesh R";
         r.buttons = [{l:'Deans List 🎓',a:'deans_list',i:'👨‍🏫'}, {l:'Key Executives Page',u:'https://rvce.edu.in/about_us/key-executives/',i:'🌐'}]; break;
     case 'dress_code':
         r.text += T("Dress sharp! 👔 No shorts or ripped jeans. Casuals are okay, but labs require safety gear (Khakis/Aprons)!",
@@ -3614,8 +3627,11 @@ function getResponse(id) {
             const d = KB.departments.ug.find(x=>x.c===c) || KB.departments.pg.find(x=>x.c===c);
             if (d && d.hod) {
                 if (d.hod_bio) return renderHODCard(d);
-                r.text += T(`The Head of Department for ${d.n} is **${d.hod}**! 👨‍🏫`, `The HOD for **${d.n}** is **${d.hod}**.`);
-                r.buttons = [{l:'Department Page',u:d.u,i:'🌐'}, {l:'All HODs',a:'hods_list',i:'👩‍🏫'}];
+                const roleLabel = d.c === 'aiml' ? 'Program Coordinator / Department Head' : 'Head of Department (HOD)';
+                r.text += T(`The ${roleLabel} for ${d.n} is **${d.hod}**! 👨‍🏫`, `The ${roleLabel} for **${d.n}** is **${d.hod}**.`);
+                r.buttons = [{l:'Department Page',u:d.u,i:'🌐'}];
+                if (d.hod_url) r.buttons.push({l:'Faculty Profile',u:d.hod_url,i:'👨‍🏫'});
+                r.buttons.push({l:'All HODs',a:'hods_list',i:'👩‍🏫'});
                 return r;
             } else {
                 r.text += T(`I don't have the specific HOD name for ${d?d.n:c} saved. Let me show you the full list! 📚`, "Please check the full HODs list for that information.");
@@ -5003,6 +5019,12 @@ setTimeout(()=>{
     const botRoot = document.getElementById('rvce-chatbot-root');
     if (botRoot) {
         botRoot.addEventListener('click', (e) => {
+            if (e._rvceClickTracked) return;
+            // If telemetry.js is loaded, it manages unified click tracking to prevent twin events
+            if (typeof window.rvceTrackEvent === 'function') {
+                return;
+            }
+            e._rvceClickTracked = true;
             const target = e.target;
             if (!target) return;
             
