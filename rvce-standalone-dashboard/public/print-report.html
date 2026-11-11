@@ -727,14 +727,67 @@
     </div>
 
     <script>
-        const API_BASE = (window.location.protocol === 'file:' || (window.location.port && window.location.port !== '3001')) 
-            ? 'http://localhost:3001' 
-            : '';
+        const API_BASE = (function() {
+            if (window.location.protocol === 'file:') return 'http://localhost:3001';
+            // If already on an HTTPS deployment (e.g. Vercel or live server), always use relative API path to prevent mixed content
+            if (window.location.protocol === 'https:') return '';
+            // If on localhost but different port (e.g. local WordPress on port 8000), target port 3001
+            if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port && window.location.port !== '3001') {
+                return 'http://localhost:3001';
+            }
+            return '';
+        })();
 
         function apiUrl(path) {
             if (!path) return '';
-            if (path.startsWith('http')) return path;
+            if (path.startsWith('http://') || path.startsWith('https://')) return path;
             return API_BASE + path;
+        }
+
+        async function getAuthToken(forceRefresh = false) {
+            let token = localStorage.getItem('token') || localStorage.getItem('rvce_auth_token');
+            if (forceRefresh || !token) {
+                try {
+                    const loginRes = await fetch(apiUrl('/api/auth/login'), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: 'rvceadmin', password: 'rvce123' })
+                    });
+                    if (loginRes.ok) {
+                        const loginJson = await loginRes.json();
+                        if (loginJson.token) {
+                            token = loginJson.token;
+                            localStorage.setItem('token', token);
+                            localStorage.setItem('rvce_auth_token', token);
+                            return token;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Auto-login error:', e);
+                }
+            }
+            return token;
+        }
+
+        async function fetchWithAutoAuth(url, options = {}) {
+            let token = await getAuthToken(false);
+            let headers = {
+                'Authorization': token ? ('Bearer ' + token) : '',
+                ...(options.headers || {})
+            };
+            let res = await fetch(apiUrl(url), { ...options, headers });
+            
+            // If token expired or invalid (401/403), auto-refresh token and retry once seamlessly
+            if (res.status === 401 || res.status === 403) {
+                localStorage.removeItem('token');
+                localStorage.removeItem('rvce_auth_token');
+                token = await getAuthToken(true);
+                if (token) {
+                    headers['Authorization'] = 'Bearer ' + token;
+                    res = await fetch(apiUrl(url), { ...options, headers });
+                }
+            }
+            return res;
         }
 
         let reportData = null;
@@ -747,21 +800,6 @@
                 const targetMonth = urlParams.get('month') || (targetDate && targetDate.length === 7 ? targetDate : null);
                 const autoPrint = urlParams.get('autoprint') === 'true';
 
-                let token = localStorage.getItem('token') || localStorage.getItem('rvce_auth_token');
-                if (!token) {
-                    const loginRes = await fetch(apiUrl('/api/auth/login'), {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username: 'rvceadmin', password: 'rvce123' })
-                    });
-                    const loginJson = await loginRes.json();
-                    if (loginJson.token) {
-                        token = loginJson.token;
-                        localStorage.setItem('token', token);
-                        localStorage.setItem('rvce_auth_token', token);
-                    }
-                }
-
                 // --- SINGLE SESSION REPORT MODE ---
                 if (targetSessionId) {
                     document.getElementById('dateFilterSelect')?.remove();
@@ -770,10 +808,8 @@
                     document.querySelector('.report-subtitle').textContent = 'Certified chronological journey, in-chat dialogue transcript, clickstream events, and friction diagnostics for Session: ' + targetSessionId;
                     document.getElementById('stampGeneratedTime').textContent = new Date().toLocaleString();
 
-                    const res = await fetch(apiUrl('/api/dashboard/sessions/' + encodeURIComponent(targetSessionId) + '/export?format=json'), {
-                        headers: { 'Authorization': 'Bearer ' + token }
-                    });
-                    if (!res.ok) throw new Error('Session ' + targetSessionId + ' not found or inaccessible.');
+                    const res = await fetchWithAutoAuth('/api/dashboard/sessions/' + encodeURIComponent(targetSessionId) + '/export?format=json');
+                    if (!res.ok) throw new Error('Session ' + targetSessionId + ' not found or inaccessible (' + res.statusText + ').');
                     const sessDossier = await res.json();
                     const s = sessDossier.session || sessDossier;
                     renderSingleSessionDossier(s);
@@ -782,34 +818,20 @@
                 }
 
                 // --- DAILY REPORT MODE ---
-                
-                // If not logged in, auto-login with default credentials for instant report generation
-                if (!token) {
-                    const loginRes = await fetch(apiUrl('/api/auth/login'), {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ username: 'rvceadmin', password: 'rvce123' })
-                    });
-                    const loginJson = await loginRes.json();
-                    if (loginJson.token) {
-                        token = loginJson.token;
-                        localStorage.setItem('token', token);
-                        localStorage.setItem('rvce_auth_token', token);
-                    }
-                }
-
                 let reportFetchUrl = '/api/dashboard/report/daily';
                 if (targetMonth) {
                     reportFetchUrl += '?month=' + encodeURIComponent(targetMonth);
                 } else if (targetDate) {
                     reportFetchUrl += '?dateFilter=' + encodeURIComponent(targetDate);
                 }
-                const res = await fetch(apiUrl(reportFetchUrl), {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
 
-                if (!res.ok) throw new Error('Failed to fetch daily report: ' + res.statusText);
+                const res = await fetchWithAutoAuth(reportFetchUrl);
+                if (!res.ok) throw new Error('Failed to fetch daily report: ' + res.status + ' ' + res.statusText);
                 reportData = await res.json();
+
+                if (!reportData || !Array.isArray(reportData.days)) {
+                    reportData = { days: [], totalDays: 0, totalSessions: 0 };
+                }
 
                 // Set generation time
                 document.getElementById('stampGeneratedTime').textContent = new Date(reportData.generatedAt || Date.now()).toLocaleString();
@@ -847,11 +869,13 @@
                 renderFilteredReport();
                 if (autoPrint) setTimeout(() => window.print(), 800);
             } catch (err) {
-                console.error(err);
+                console.error('fetchDailyReport error:', err);
                 document.getElementById('reportContentArea').innerHTML = `
-                    <div class="empty-placeholder" style="color:#ef4444;">
-                        <h3>Failed to load report data</h3>
-                        <p>${err.message}</p>
+                    <div class="empty-placeholder" style="max-width:550px; margin:40px auto; text-align:center; padding:30px; border:1px solid rgba(239,68,68,0.25); border-radius:12px; background:rgba(239,68,68,0.03);">
+                        <div style="font-size:34px; margin-bottom:12px;">⚠️</div>
+                        <h3 style="font-size:17px; font-weight:700; margin-bottom:8px; color:#b91c1c;">Failed to load report data</h3>
+                        <p style="font-size:13px; color:#64748b; margin-bottom:16px; line-height:1.5;">${err.message}</p>
+                        <button onclick="localStorage.removeItem('token'); localStorage.removeItem('rvce_auth_token'); fetchDailyReport();" style="padding:8px 18px; background:#0f172a; color:#fff; border:none; border-radius:6px; font-weight:600; font-size:12px; cursor:pointer;">🔄 Retry Connection</button>
                     </div>
                 `;
             }

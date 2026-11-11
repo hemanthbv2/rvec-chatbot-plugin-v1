@@ -2373,7 +2373,11 @@ app.get('/api/dashboard/report/daily', authenticateToken, async (req, res) => {
         const daysMap = new Map();
 
         sessions.forEach(s => {
-            const dateObj = new Date(s.startTime || s.createdAt || Date.now());
+            let rawTime = s.startTime || s.createdAt || Date.now();
+            let dateObj = new Date(rawTime);
+            if (isNaN(dateObj.getTime())) {
+                dateObj = new Date();
+            }
             const yyyy = dateObj.getFullYear();
             const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
             const dd = String(dateObj.getDate()).padStart(2, '0');
