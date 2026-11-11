@@ -1837,7 +1837,7 @@ app.get('/api/dashboard/sessions', authenticateToken, async (req, res) => {
 // Single Session Full Journey, Replay & Dialogue
 app.get('/api/dashboard/session/:id', authenticateToken, async (req, res) => {
     try {
-        const id = req.params.id;
+        const id = (req.params.id || '').replace(/^Replay:\s*/i, '').trim();
         let session = null;
         let interactions = [];
 
@@ -2100,7 +2100,7 @@ app.get('/api/dashboard/session/:id', authenticateToken, async (req, res) => {
 // Delete a session
 app.delete('/api/dashboard/sessions/:id', authenticateToken, async (req, res) => {
     try {
-        const id = req.params.id;
+        const id = (req.params.id || '').replace(/^Replay:\s*/i, '').trim();
         memStore.sessions.delete(id);
         memStore.interactions = memStore.interactions.filter(i => i.sessionId !== id);
         if (isMongoConnected) {
@@ -2885,7 +2885,7 @@ app.get('/api/dashboard/export/csv', authenticateToken, async (req, res) => {
 // Single Session Download Dossier (JSON or CSV)
 app.get(['/api/dashboard/sessions/:id/export', '/api/dashboard/session/:id/export'], authenticateToken, async (req, res) => {
     try {
-        const sid = req.params.id;
+        const sid = (req.params.id || '').replace(/^Replay:\s*/i, '').trim();
         const format = (req.query.format || 'json').toLowerCase();
 
         let s = null;
