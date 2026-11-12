@@ -3,7 +3,7 @@
  * Plugin Name: RVCE Chatbot
  * Plugin URI: https://rvce.edu.in
  * Description: Premium conversational AI chatbot for RV College of Engineering (RVCE). Empowers prospective students, parents, and visitors to inquire about engineering programs, KCET/COMEDK/Management admissions, 17 department faculty & HOD directories, hostel amenities, cutoffs, placements, and campus life. Includes an integrated settings dashboard and live analytics command center.
- * Version: 3.1.0
+ * Version: 3.2.0
  * Author: RVCE Team
  * Author URI: https://rvce.edu.in
  * License: GPL-2.0+
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define Constants
-define('RVCE_CHATBOT_VERSION', '3.1.0');
+define('RVCE_CHATBOT_VERSION', '3.2.0');
 define('RVCE_CHATBOT_DIR_PATH', plugin_dir_path(__FILE__));
 define('RVCE_CHATBOT_DIR_URL', plugin_dir_url(__FILE__));
 
