@@ -2782,9 +2782,7 @@
             }
 
             // Auto-detect API base
-            const API_BASE = (window.location.protocol === 'file:' || (window.location.port && window.location.port !== '3001'))
-                ? 'http://localhost:3001'
-                : '';
+            const API_BASE = (window.location.protocol === 'file:') ? 'http://localhost:3001' : '';
 
             function apiUrl(path) {
                 if (!path) return '';
@@ -2827,7 +2825,9 @@
             function checkAuth() {
                 const token = localStorage.getItem('token') || localStorage.getItem('rvce_auth_token');
                 if (!token) {
-                    ensureAuthenticated().then(ok => { if (ok) loadAllData(); });
+                    ensureAuthenticated()
+                        .then(ok => { if (ok) loadAllData().catch(e => console.warn(e)); })
+                        .catch(err => console.warn('ensureAuthenticated checkAuth error:', err));
                     return false;
                 }
                 const lv = document.getElementById('login-view');
@@ -3480,7 +3480,7 @@
             // --- PDF Download & Export Suite ---
             function downloadSessionPdf(sessionId) {
                 if (!sessionId) return;
-                const cleanSid = sessionId.replace(/^Replay:\s*/i, '').trim();
+                const cleanSid = (sessionId || '').replace(/^(?:Replay:\s*)+/i, '').trim();
                 window.open(`/print-report.html?session=${encodeURIComponent(cleanSid)}&autoprint=true`, '_blank');
             }
             window.downloadSessionPdf = downloadSessionPdf;
@@ -3851,14 +3851,26 @@
             // --- Single Session Download & Daily Bulk Export Suite ---
             async function downloadSingleSession(sessionId, format = 'json') {
                 if (!sessionId) return;
-                const cleanSid = sessionId.replace(/^Replay:\s*/i, '').trim();
+                const cleanSid = String(sessionId).replace(/^(?:Replay:\s*)+/i, '').trim();
                 try {
                     showToast(`⏳ Preparing session export (${format.toUpperCase()})...`);
-                    const token = localStorage.getItem('token') || localStorage.getItem('rvce_auth_token');
+                    await ensureAuthenticated().catch(e => console.warn(e));
+                    let token = localStorage.getItem('token') || localStorage.getItem('rvce_auth_token');
                     const url = apiUrl(`/api/dashboard/sessions/${encodeURIComponent(cleanSid)}/export?format=${format}`);
-                    const res = await fetch(url, {
+                    let res = await fetch(url, {
                         headers: token ? { 'Authorization': 'Bearer ' + token } : {}
                     });
+                    if (res.status === 401 || res.status === 403) {
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('rvce_auth_token');
+                        const reauthed = await ensureAuthenticated().catch(e => false);
+                        if (reauthed) {
+                            token = localStorage.getItem('token') || localStorage.getItem('rvce_auth_token');
+                            res = await fetch(url, {
+                                headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+                            });
+                        }
+                    }
                     if (!res.ok) throw new Error('Export request failed: ' + res.status);
                     const blob = await res.blob();
                     const a = document.createElement('a');
@@ -3879,8 +3891,9 @@
                 let sid = activeDrawerSessionId || activeJourneySteps[0]?.sessionId || '';
                 if (!sid) {
                     const raw = (document.getElementById('drawerSessionId')?.textContent || '').trim();
-                    sid = raw.replace(/^Replay:\s*/i, '').trim();
+                    sid = raw.replace(/^(?:Replay:\s*)+/i, '').trim();
                 }
+                sid = (sid || '').replace(/^(?:Replay:\s*)+/i, '').trim();
                 if (sid && sid !== 'Session Playback') {
                     if (format === 'pdf') {
                         downloadSessionPdf(sid);
@@ -3934,20 +3947,36 @@
             }
 
             async function fetchWithAuth(url, options = {}) {
-                const token = localStorage.getItem('token') || localStorage.getItem('rvce_auth_token');
+                let token = localStorage.getItem('token') || localStorage.getItem('rvce_auth_token');
                 try {
                     const targetUrl = apiUrl(url);
-                    const res = await fetch(targetUrl, {
+                    let res = await fetch(targetUrl, {
                         ...options,
                         headers: {
-                            'Authorization': 'Bearer ' + token,
+                            'Authorization': token ? ('Bearer ' + token) : '',
                             ...(options.headers || {})
                         }
                     });
                     if (res.status === 401 || res.status === 403) {
                         localStorage.removeItem('token');
                         localStorage.removeItem('rvce_auth_token');
-                        document.getElementById('login-view').style.display = 'flex';
+                        const reauthed = await ensureAuthenticated().catch(e => false);
+                        if (reauthed) {
+                            token = localStorage.getItem('token') || localStorage.getItem('rvce_auth_token');
+                            res = await fetch(targetUrl, {
+                                ...options,
+                                headers: {
+                                    'Authorization': token ? ('Bearer ' + token) : '',
+                                    ...(options.headers || {})
+                                }
+                            });
+                        }
+                    }
+                    if (res.status === 401 || res.status === 403) {
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('rvce_auth_token');
+                        const lv = document.getElementById('login-view');
+                        if (lv) lv.style.display = 'flex';
                         return null;
                     }
                     if (!res.ok) {
@@ -5236,7 +5265,7 @@
             // --- Replay Drawer Logic ---
             window.openDrawer = function(id) { return openReplayDrawer(id); };
             async function openReplayDrawer(sessionId) {
-                const cleanSid = (sessionId || '').replace(/^Replay:\s*/i, '').trim();
+                const cleanSid = (sessionId || '').replace(/^(?:Replay:\s*)+/i, '').trim();
                 activeDrawerSessionId = cleanSid;
                 const overlay = document.getElementById('drawerOverlay');
                 overlay.classList.add('open');
@@ -5248,7 +5277,7 @@
                 const btnSpeed = document.getElementById('btnPlayerSpeed');
                 if (btnSpeed) btnSpeed.textContent = '1.0x';
 
-                document.getElementById('drawerSessionId').textContent = 'Replay: ' + sessionId;
+                document.getElementById('drawerSessionId').textContent = 'Replay: ' + cleanSid;
                 document.getElementById('drawerSessionMeta').textContent = 'Loading playback...';
                 document.getElementById('drawerJourneyFlow').innerHTML = '<div style="color:var(--text-dim); padding:20px; text-align:center;">Reconstructing visual clickstream journey...</div>';
                 document.getElementById('drawerChatWindow').innerHTML = 'Reconstructing conversation dialogue...';
@@ -5256,7 +5285,7 @@
 
                 switchDrawerTab('journey');
 
-                const res = await fetchWithAuth('/api/dashboard/session/' + sessionId);
+                const res = await fetchWithAuth('/api/dashboard/session/' + encodeURIComponent(cleanSid));
                 if (!res || !res.session) {
                     document.getElementById('drawerJourneyFlow').innerHTML = '<div style="color:var(--danger); padding:20px;">Failed to load session journey.</div>';
                     return;
@@ -5768,7 +5797,7 @@
 
             async function deleteSingleSession(sessionId, event) {
                 if (event) event.stopPropagation();
-                const cleanSid = (sessionId || '').replace(/^Replay:\s*/i, '').trim();
+                const cleanSid = (sessionId || '').replace(/^(?:Replay:\s*)+/i, '').trim();
                 if (!confirm(`Are you sure you want to permanently delete session "${cleanSid}"?\n\nThis will remove its entire journey, conversation history, and telemetry across all databases.`)) {
                     return;
                 }
@@ -5824,10 +5853,12 @@
             // Initialize
             window.onload = () => {
                 switchTab('recordings');
-                loadAllData();
+                loadAllData().catch(e => console.warn('loadAllData onload error:', e));
                 connectSSE();
             };
-            setInterval(loadAllData, 30000);
+            setInterval(() => {
+                loadAllData().catch(e => console.warn('loadAllData interval error:', e));
+            }, 30000);
         </script>
 </body>
 

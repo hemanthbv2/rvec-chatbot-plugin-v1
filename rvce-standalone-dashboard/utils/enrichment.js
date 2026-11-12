@@ -1,7 +1,8 @@
 const { UAParser } = require('ua-parser-js');
 
-// In-memory cache for IP geo lookups to prevent rate limiting & speed up response times
+// In-memory LRU cache for IP geo lookups to prevent rate limiting & speed up response times (max 2,000 entries)
 const geoCache = new Map();
+const MAX_GEO_CACHE_SIZE = 2000;
 
 function extractClientIp(req) {
     const forwarded = req.headers['x-forwarded-for'];
@@ -61,9 +62,12 @@ async function resolveGeoLocation(req, clientIp) {
         };
     }
 
-    // 3. Check memory cache
+    // 3. Check memory cache (LRU touch)
     if (geoCache.has(clientIp)) {
-        return geoCache.get(clientIp);
+        const cachedGeo = geoCache.get(clientIp);
+        geoCache.delete(clientIp);
+        geoCache.set(clientIp, cachedGeo);
+        return cachedGeo;
     }
 
     // 4. Fallback lookup via IP-API (free, accurate, fast)
@@ -89,6 +93,12 @@ async function resolveGeoLocation(req, clientIp) {
                     isp: data.isp || '',
                     org: data.org || ''
                 };
+                if (geoCache.has(clientIp)) {
+                    geoCache.delete(clientIp);
+                } else if (geoCache.size >= MAX_GEO_CACHE_SIZE) {
+                    const oldestKey = geoCache.keys().next().value;
+                    if (oldestKey !== undefined) geoCache.delete(oldestKey);
+                }
                 geoCache.set(clientIp, geo);
                 return geo;
             }
@@ -180,6 +190,7 @@ module.exports = {
     extractClientIp,
     resolveGeoLocation,
     detectBot,
-    parseDeviceEnvironment
+    parseDeviceEnvironment,
+    geoCache
 };
 

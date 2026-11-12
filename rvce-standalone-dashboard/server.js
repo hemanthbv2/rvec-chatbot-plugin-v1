@@ -18,10 +18,20 @@ const User = require('./models/User');
 const { extractClientIp, resolveGeoLocation, parseDeviceEnvironment, detectBot } = require('./utils/enrichment');
 const { supabase } = require('./utils/supabaseClient');
 
+// Global Process Hardening Exception Handlers
+process.on('uncaughtException', (err) => {
+    console.error('Unhandled Exception caught:', err.message, err.stack);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'rvce_command_center_secret_2026';
 const MONGO_URI = process.env.MONGO_URI;
+
+const MAX_MEM_LEADS = 2000;
 
 // In-Memory High-Availability Storage Fallback (Guarantees 100% Uptime & Instant Dev Readiness)
 const memStore = {
@@ -48,7 +58,7 @@ function broadcastEvent(type, data) {
 
 // Middleware
 app.use(cors({
-    origin: function(origin, callback) {
+    origin: function (origin, callback) {
         // Allow all RVCE sub-portals and dev origins
         return callback(null, true);
     },
@@ -281,6 +291,10 @@ app.get('/api/dashboard/live/stream', (req, res) => {
         }
     }, 20000);
 
+    res.on('error', () => {
+        clearInterval(intervalId);
+        sseClients.delete(res);
+    });
     req.on('close', () => {
         clearInterval(intervalId);
         sseClients.delete(res);
@@ -297,23 +311,9 @@ const recentEventsDedupeCache = new Map();
 const clientSessionBindings = new Map();
 
 function getCanonicalSessionId(rawSessionId, clientFingerprint) {
-    if (!clientFingerprint || !rawSessionId) return rawSessionId;
-    const now = Date.now();
-    const existing = clientSessionBindings.get(clientFingerprint);
-    if (existing && (now - existing.time < 30 * 60 * 1000)) {
-        // If incoming session is different (e.g. sid_ vs sess_rvce_), bind to the established one!
-        if (existing.sessionId !== rawSessionId) {
-            return existing.sessionId;
-        }
-        existing.time = now;
-        return existing.sessionId;
-    }
-    clientSessionBindings.set(clientFingerprint, { sessionId: rawSessionId, time: now });
-    if (clientSessionBindings.size > 2000) {
-        for (const [k, v] of clientSessionBindings.entries()) {
-            if (now - v.time > 1800000) clientSessionBindings.delete(k);
-        }
-    }
+    if (!rawSessionId) return 'sess_anon_' + Date.now();
+    // Do not hijack distinct visitor sessions from the same IP/network.
+    // Preserving each unique rawSessionId ensures all recorded sessions remain visible.
     return rawSessionId;
 }
 
@@ -560,13 +560,13 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
 
             // Lead Detection
             let isLead = (eventType === 'form_submit' || eventType === 'lead_submitted');
-            let leadPayload = meta.leadData || null;
+            let leadPayload = meta.leadData || (meta.email || meta.phone || meta.name ? meta : null);
 
             const textToScan = queryText + ' ' + (meta.elementText || '') + ' ' + JSON.stringify(meta);
             const emailMatch = textToScan.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
             const phoneMatch = textToScan.match(/\b[6-9]\d{9}\b/);
 
-            if ((emailMatch && !/rvce\.edu\.in|bot|crawler/i.test(emailMatch[0])) || phoneMatch) {
+            if ((emailMatch && !/bot|crawler/i.test(emailMatch[0])) || phoneMatch) {
                 isLead = true;
                 if (!leadPayload) leadPayload = {};
                 if (!leadPayload.email && emailMatch) leadPayload.email = emailMatch[0];
@@ -574,31 +574,64 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
             }
 
             if (isLead && leadPayload) {
-                const leadDoc = {
-                    _id: 'lead_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                    sessionId: sessionId,
-                    instituteId: 'rvce',
-                    name: leadPayload.name || 'Candidate',
-                    phone: leadPayload.phone || '',
-                    email: leadPayload.email || '',
-                    status: 'New',
-                    score: 85,
-                    notes: leadPayload.branch ? `Interested in: ${leadPayload.branch}` : '',
-                    leadData: leadPayload,
-                    attribution: {
-                        referrer: referrerType,
-                        entryPage: landingPage,
-                        landingUrl: landingPage,
-                        utmSource: utmParams.source || '',
-                        utmMedium: utmParams.medium || '',
-                        utmCampaign: utmParams.campaign || ''
-                    },
-                    geo: { country: geoInfo.country, city: geoInfo.city, region: geoInfo.region },
-                    device: { type: deviceInfo.type, os: deviceInfo.os, browser: deviceInfo.browser },
-                    createdAt: new Date(e.timestamp || e.d || Date.now())
-                };
-                leadDocs.push(leadDoc);
-                memStore.leads.set(leadDoc._id, leadDoc);
+                const targetPhone = leadPayload.phone || '';
+                const targetEmail = leadPayload.email || '';
+
+                // Idempotent lead deduplication: check if lead with (sessionId, phone) or (sessionId, email) or sessionId exists
+                let existingLead = null;
+                for (const l of memStore.leads.values()) {
+                    if ((sessionId && l.sessionId === sessionId) ||
+                        (targetEmail && (l.email === targetEmail || l.leadData?.email === targetEmail)) ||
+                        (targetPhone && (l.phone === targetPhone || l.leadData?.phone === targetPhone))) {
+                        existingLead = l;
+                        break;
+                    }
+                }
+
+                if (existingLead) {
+                    existingLead.name = leadPayload.name || existingLead.name || 'Candidate';
+                    if (targetPhone) existingLead.phone = targetPhone;
+                    if (targetEmail) existingLead.email = targetEmail;
+                    if (leadPayload.branch || leadPayload.program) existingLead.notes = `Interested in: ${leadPayload.branch || leadPayload.program}`;
+                    existingLead.leadData = { ...(existingLead.leadData || {}), ...leadPayload };
+                    existingLead.geo = { country: geoInfo.country, city: geoInfo.city, region: geoInfo.region };
+                    existingLead.device = { type: deviceInfo.type, os: deviceInfo.os, browser: deviceInfo.browser };
+                    if (!leadDocs.some(d => d._id === existingLead._id || d.sessionId === sessionId)) {
+                        leadDocs.push(existingLead);
+                    }
+                } else {
+                    const leadDoc = {
+                        _id: 'lead_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+                        sessionId: sessionId,
+                        instituteId: 'rvce',
+                        name: leadPayload.name || 'Candidate',
+                        phone: targetPhone,
+                        email: targetEmail,
+                        status: 'New',
+                        score: 85,
+                        notes: (leadPayload.branch || leadPayload.program) ? `Interested in: ${leadPayload.branch || leadPayload.program}` : '',
+                        leadData: leadPayload,
+                        attribution: {
+                            referrer: referrerType,
+                            entryPage: landingPage,
+                            landingUrl: landingPage,
+                            utmSource: utmParams.source || '',
+                            utmMedium: utmParams.medium || '',
+                            utmCampaign: utmParams.campaign || ''
+                        },
+                        geo: { country: geoInfo.country, city: geoInfo.city, region: geoInfo.region },
+                        device: { type: deviceInfo.type, os: deviceInfo.os, browser: deviceInfo.browser },
+                        createdAt: new Date(e.timestamp || e.d || Date.now())
+                    };
+                    memStore.leads.set(leadDoc._id, leadDoc);
+                    if (memStore.leads.size > MAX_MEM_LEADS) {
+                        const oldestKey = memStore.leads.keys().next().value;
+                        memStore.leads.delete(oldestKey);
+                    }
+                    if (!leadDocs.some(d => d.sessionId === sessionId)) {
+                        leadDocs.push(leadDoc);
+                    }
+                }
             }
 
             const interactionDoc = {
@@ -651,7 +684,27 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                     await Interaction.insertMany(interactionDocs, { ordered: false });
                 }
                 if (leadDocs.length > 0) {
-                    await Lead.insertMany(leadDocs, { ordered: false });
+                    for (const ld of leadDocs) {
+                        const mongoLead = { ...ld };
+                        delete mongoLead._id;
+                        const orConds = [];
+                        if (ld.sessionId) orConds.push({ sessionId: ld.sessionId });
+                        if (ld.phone) orConds.push({ phone: ld.phone });
+                        if (ld.email) orConds.push({ email: ld.email });
+                        if (orConds.length > 0) {
+                            await Lead.findOneAndUpdate(
+                                { $or: orConds },
+                                { $set: mongoLead },
+                                { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+                            );
+                        } else {
+                            await Lead.findOneAndUpdate(
+                                { sessionId: ld.sessionId },
+                                { $set: mongoLead },
+                                { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+                            );
+                        }
+                    }
                 }
             } catch (dbErr) {
                 console.warn('MongoDB insert batch note:', dbErr.message);
@@ -867,21 +920,39 @@ app.post(['/api/logs', '/api/logs/batch', '/api/telemetry'], async (req, res) =>
                 }
 
                 if (leadDocs.length > 0) {
-                    const mappedLeads = leadDocs.map(l => ({
-                        session_id: l.sessionId,
-                        institute_id: 'rvce',
-                        name: l.name,
-                        phone: l.phone,
-                        email: l.email,
-                        status: l.status || 'New',
-                        lead_data: l.leadData || {},
-                        attribution: l.attribution || {},
-                        geo: l.geo || {},
-                        device: l.device || {},
-                        created_at: l.createdAt
-                    }));
-                    const { error: leadErr } = await supabase.from('leads').insert(mappedLeads);
-                    if (leadErr) console.warn('Supabase leads insert note:', leadErr.message);
+                    for (const l of leadDocs) {
+                        const leadRow = {
+                            session_id: l.sessionId,
+                            institute_id: 'rvce',
+                            name: l.name,
+                            phone: l.phone,
+                            email: l.email,
+                            status: l.status || 'New',
+                            lead_data: l.leadData || {},
+                            attribution: l.attribution || {},
+                            geo: l.geo || {},
+                            device: l.device || {},
+                            created_at: l.createdAt
+                        };
+                        try {
+                            let orParts = [];
+                            if (l.sessionId) orParts.push(`session_id.eq.${l.sessionId}`);
+                            if (l.phone) orParts.push(`phone.eq.${l.phone}`);
+                            if (l.email) orParts.push(`email.eq.${l.email}`);
+                            let existingSupaLeads = null;
+                            if (orParts.length > 0) {
+                                const { data } = await supabase.from('leads').select('id').or(orParts.join(',')).limit(1);
+                                existingSupaLeads = data;
+                            }
+                            if (existingSupaLeads && existingSupaLeads.length > 0) {
+                                await supabase.from('leads').update(leadRow).eq('id', existingSupaLeads[0].id);
+                            } else {
+                                await supabase.from('leads').insert(leadRow);
+                            }
+                        } catch (supaLeadErr) {
+                            console.warn('Supabase lead upsert note:', supaLeadErr.message);
+                        }
+                    }
                 }
 
                 const cumulativeBotOpen = memSession.botOpenedOnPage || botOpenedOnPage || '';
@@ -1008,20 +1079,20 @@ async function getUnifiedSessions(forceRefresh = false) {
     // 1. Primary Source: MongoDB Atlas
     if (isMongoConnected) {
         try {
-            sessions = await Session.find({}).sort({ lastActive: -1 }).limit(500).maxTimeMS(3500).lean();
+            sessions = await Session.find({}).sort({ lastActive: -1 }).limit(3000).maxTimeMS(3500).lean();
         } catch (e) {
             console.warn('MongoDB getUnifiedSessions note:', e.message);
         }
     }
 
-    // 2. Secondary/Dual Source: Supabase (ONLY queried if Mongo is down or disconnected)
-    if (sessions.length === 0 && supabase && !isMongoConnected) {
+    // 2. Secondary/Dual Source: Supabase (queried if Mongo returned empty or disconnected)
+    if (sessions.length === 0 && supabase) {
         try {
             const { data, error } = await supabase
                 .from('sessions')
                 .select('*')
                 .order('last_active', { ascending: false })
-                .limit(500);
+                .limit(3000);
             if (!error && data && data.length > 0) {
                 sessions = data.map(s => {
                     const memS = memStore.sessions.get(s.session_id);
@@ -1102,7 +1173,7 @@ async function getUnifiedSessions(forceRefresh = false) {
 
 async function getUnifiedInteractions(sessionIds = null) {
     const now = Date.now();
-    
+
     // If cache is valid, return immediately (filtered by sessionIds if requested)
     if (cachedUnifiedInteractions && (now - lastInteractionCacheTime < CACHE_TTL_MS)) {
         if (sessionIds && sessionIds.length > 0) {
@@ -1207,6 +1278,9 @@ app.get('/api/dashboard/overview', authenticateToken, async (req, res) => {
         const allSessions = await getUnifiedSessions();
         const allInteractions = await getUnifiedInteractions();
 
+        let totalInteractions = 0;
+        let totalSessions = 0;
+
         // Global Segment Breakdown Counters
         let countAll = allSessions.length;
         let countUsers = 0;
@@ -1256,6 +1330,7 @@ app.get('/api/dashboard/overview', authenticateToken, async (req, res) => {
                 if (segment === 'all') totalSessions = countAll;
                 else if (segment === 'users') totalSessions = countUsers;
                 else if (segment === 'conversed') totalSessions = countConversed;
+                else if (segment === 'opened') totalSessions = countOpened;
                 else if (segment === 'bots') totalSessions = countBots;
             } catch (cntErr) {
                 console.warn('Overview MongoDB counts note:', cntErr.message);
@@ -1265,8 +1340,14 @@ app.get('/api/dashboard/overview', authenticateToken, async (req, res) => {
         const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000);
         let liveNow = filteredSessions.filter(s => new Date(s.lastActive || s.startTime) >= fifteenMinsAgo).length;
 
-        let totalSessionsVal = (segment === 'all' && isMongoConnected && countAll > 0) ? countAll : filteredSessions.length;
-        let totalInteractionsVal = (isMongoConnected && totalInteractions > 0) ? totalInteractions : filteredInteractions.length;
+        let totalSessionsVal = (segment === 'users' && countUsers > 0) ? countUsers :
+            (segment === 'all' && countAll > 0 ? countAll :
+                (segment === 'conversed' && countConversed > 0 ? countConversed :
+                    (segment === 'opened' && countOpened > 0 ? countOpened :
+                        (segment === 'bots' && countBots > 0 ? countBots : (totalSessions || filteredSessions.length)))));
+        totalSessions = totalSessionsVal;
+
+        if (!totalInteractions) totalInteractions = filteredInteractions.length;
         let rageClickSessions = filteredSessions.filter(s => (s.metrics?.rageClicks > 0)).length;
         let deadClickSessions = filteredSessions.filter(s => (s.metrics?.deadClicks > 0)).length;
         let hesitationSessions = filteredSessions.filter(s => (s.metrics?.hesitationCount > 0)).length;
@@ -1290,8 +1371,8 @@ app.get('/api/dashboard/overview', authenticateToken, async (req, res) => {
                 opened: countOpened,
                 bots: countBots
             },
-            totalSessions: totalSessionsVal,
-            totalInteractions: totalInteractionsVal,
+            totalSessions: totalSessions,
+            totalInteractions: totalInteractions,
             activeConversations: countConversed,
             openedOnly: countOpened,
             botCount: countBots,
@@ -1579,7 +1660,7 @@ app.get('/api/dashboard/sessions', authenticateToken, async (req, res) => {
     try {
         const { filter, search, limit, segment, subsite, date, page, paginate } = req.query;
         const pageNum = Math.max(1, parseInt(page) || 1);
-        const pageSize = Math.min(Math.max(10, parseInt(limit) || 50), 200);
+        const pageSize = Math.min(Math.max(1, parseInt(limit) || 50), 200);
         const skip = (pageNum - 1) * pageSize;
         const isPaginatedRequest = paginate === 'true' || page !== undefined || (date !== undefined && date !== 'all');
 
@@ -1709,7 +1790,7 @@ app.get('/api/dashboard/sessions', authenticateToken, async (req, res) => {
         }
 
         // Fallback to in-memory/unified resolver if Mongo returned nothing or was disconnected
-        if (rawSessions.length === 0 && !isMongoConnected) {
+        if (rawSessions.length === 0) {
             let list = await getUnifiedSessions();
             if (date && date !== 'all') {
                 let targetDateStr = date;
@@ -1750,6 +1831,22 @@ app.get('/api/dashboard/sessions', authenticateToken, async (req, res) => {
             }
             totalCount = list.length;
             rawSessions = list.slice(skip, skip + pageSize);
+        }
+
+        // Ensure in-memory sessions are never dropped
+        if (memStore.sessions.size > 0) {
+            const knownIds = new Set(rawSessions.map(s => s.sessionId));
+            for (const memS of memStore.sessions.values()) {
+                if (!knownIds.has(memS.sessionId)) {
+                    if (segment && segment !== 'all' && !filterSessionBySegment(memS, segment)) continue;
+                    if (filter === 'rage' && !(memS.metrics?.rageClicks > 0 || memS.metrics?.rage_clicks > 0)) continue;
+                    if (filter === 'mobile' && memS.device?.type !== 'Mobile') continue;
+                    if (filter === 'desktop' && memS.device?.type === 'Mobile') continue;
+                    rawSessions.push(memS);
+                    knownIds.add(memS.sessionId);
+                }
+            }
+            totalCount = Math.max(totalCount, rawSessions.length);
         }
 
         const sessionIds = rawSessions.map(s => s.sessionId);
@@ -1834,10 +1931,10 @@ app.get('/api/dashboard/sessions', authenticateToken, async (req, res) => {
     }
 });
 
-// Single Session Full Journey, Replay & Dialogue
-app.get('/api/dashboard/session/:id', authenticateToken, async (req, res) => {
+// Single Session Full Journey, Replay & Dialogue (Supports both /session/:id and /sessions/:id)
+app.get(['/api/dashboard/sessions/:id', '/api/dashboard/session/:id'], authenticateToken, async (req, res) => {
     try {
-        const id = (req.params.id || '').replace(/^Replay:\s*/i, '').trim();
+        const id = decodeURIComponent(req.params.id || '').replace(/^(?:Replay:\s*)+/i, '').trim();
         let session = null;
         let interactions = [];
 
@@ -2097,10 +2194,10 @@ app.get('/api/dashboard/session/:id', authenticateToken, async (req, res) => {
     }
 });
 
-// Delete a session
-app.delete('/api/dashboard/sessions/:id', authenticateToken, async (req, res) => {
+// Delete a session (Supports both /sessions/:id and /session/:id)
+app.delete(['/api/dashboard/sessions/:id', '/api/dashboard/session/:id'], authenticateToken, async (req, res) => {
     try {
-        const id = (req.params.id || '').replace(/^Replay:\s*/i, '').trim();
+        const id = decodeURIComponent(req.params.id || '').replace(/^(?:Replay:\s*)+/i, '').trim();
         memStore.sessions.delete(id);
         memStore.interactions = memStore.interactions.filter(i => i.sessionId !== id);
         if (isMongoConnected) {
@@ -2345,8 +2442,83 @@ app.all(['/api/dashboard/records/deduplicate'], authenticateToken, async (req, r
             }
         }
 
+        // Deduplicate in Supabase if configured
+        if (supabase) {
+            try {
+                const { data: supaInts } = await supabase.from('interactions').select('id, session_id, event_type, query_text, interaction_id, created_at').order('created_at', { ascending: true }).limit(2000);
+                if (supaInts && supaInts.length > 0) {
+                    const supaDeleteIds = [];
+                    const supaSeen = new Map();
+                    for (const item of supaInts) {
+                        const sId = item.session_id || '';
+                        const evType = item.event_type || '';
+                        const text = String(item.query_text || item.interaction_id || '').toLowerCase().trim();
+                        const key = `${sId}:${evType}:${text}`;
+                        const itemTime = new Date(item.created_at || 0).getTime();
+                        if (supaSeen.has(key)) {
+                            const prevTime = supaSeen.get(key);
+                            if (Math.abs(itemTime - prevTime) < 5000) {
+                                supaDeleteIds.push(item.id);
+                                continue;
+                            }
+                        }
+                        supaSeen.set(key, itemTime);
+                    }
+                    if (supaDeleteIds.length > 0) {
+                        await supabase.from('interactions').delete().in('id', supaDeleteIds);
+                        removedInteractions += supaDeleteIds.length;
+                    }
+                }
+            } catch (supaDedupeErr) {
+                console.warn('Supabase deduplication note:', supaDedupeErr.message);
+            }
+        }
+
+        // Deduplicate in-memory interactions without wiping valid interactions
+        if (memStore.interactions && memStore.interactions.length > 0) {
+            const seenMem = new Map();
+            const clickSeenMem = new Map();
+            const originalCount = memStore.interactions.length;
+            const keptInteractions = [];
+
+            const sortedMemInts = [...memStore.interactions].sort((a, b) => new Date(a.createdAt || a.timestamp || 0) - new Date(b.createdAt || b.timestamp || 0));
+
+            for (const item of sortedMemInts) {
+                const sId = item.sessionId || '';
+                const evType = item.eventType || '';
+                const text = String(item.queryText || item.element?.elementText || item.element?.text || item.interactionId || '').toLowerCase().trim();
+                const key = `${sId}:${evType}:${text}`;
+                const itemTime = new Date(item.createdAt || item.timestamp || 0).getTime();
+
+                if (seenMem.has(key)) {
+                    const prevTime = seenMem.get(key);
+                    if (Math.abs(itemTime - prevTime) < 5000) {
+                        continue;
+                    }
+                }
+
+                if (evType === 'button_click' || evType === 'click') {
+                    const intId = item.interactionId || '';
+                    if (intId.includes('Button:') || intId.includes('Chip:')) {
+                        clickSeenMem.set(sId, itemTime);
+                    } else if (intId === 'click:act-btn' && clickSeenMem.has(sId)) {
+                        const prevTime = clickSeenMem.get(sId);
+                        if (Math.abs(itemTime - prevTime) < 1000) {
+                            continue;
+                        }
+                    }
+                }
+
+                seenMem.set(key, itemTime);
+                keptInteractions.push(item);
+            }
+
+            const memDupsRemoved = originalCount - keptInteractions.length;
+            removedInteractions += memDupsRemoved;
+            memStore.interactions = keptInteractions;
+        }
+
         // Invalidate memory caches
-        memStore.interactions = [];
         invalidateStorageCache();
         clientSessionBindings.clear();
         recentEventsDedupeCache.clear();
@@ -2378,11 +2550,9 @@ app.get('/api/dashboard/report/daily', authenticateToken, async (req, res) => {
             if (isNaN(dateObj.getTime())) {
                 dateObj = new Date();
             }
-            const yyyy = dateObj.getFullYear();
-            const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
-            const dd = String(dateObj.getDate()).padStart(2, '0');
-            const dateKey = `${yyyy}-${mm}-${dd}`;
-            const monthKey = `${yyyy}-${mm}`;
+            const isoStr = dateObj.toISOString();
+            const dateKey = isoStr.slice(0, 10);
+            const monthKey = isoStr.slice(0, 7);
 
             const targetMonth = month || (dateFilter && dateFilter.length === 7 ? dateFilter : null);
 
@@ -2417,7 +2587,7 @@ app.get('/api/dashboard/report/daily', authenticateToken, async (req, res) => {
             // Extract User Queries & Bot Replies
             const querySteps = (s.journey || []).filter(j => j.type === 'query' || j.type === 'message');
             const queries = querySteps.map(q => {
-                const asked = q.elementText || q.title.replace(/^Asked: "/, '').replace(/"$/, '');
+                const asked = q.elementText || (q.title ? q.title.replace(/^Asked: "/, '').replace(/"$/, '') : 'Query');
                 let answered = q.botReply || (q.detail && !q.detail.includes('User asked') ? q.detail.replace(/^Bot: "/, '').replace(/"$/, '') : '');
                 return { asked, answered, time: q.timeOffset || '00:00' };
             });
@@ -2434,7 +2604,7 @@ app.get('/api/dashboard/report/daily', authenticateToken, async (req, res) => {
             // Extract Buttons
             const buttonSteps = (s.journey || []).filter(j => j.type === 'button_click');
             const buttons = buttonSteps.map(b => ({
-                text: b.elementText || b.title.replace(/^Clicked Button: "/, '').replace(/"$/, ''),
+                text: b.elementText || (b.title ? b.title.replace(/^Clicked Button: "/, '').replace(/"$/, '') : 'Button'),
                 location: b.location || 'Chatbot',
                 page: b.url || '/'
             }));
@@ -2443,7 +2613,7 @@ app.get('/api/dashboard/report/daily', authenticateToken, async (req, res) => {
             // Extract Links
             const linkSteps = (s.journey || []).filter(j => j.type === 'link_click');
             const links = linkSteps.map(l => ({
-                text: l.elementText || l.title.replace(/^Clicked Link: "/, '').replace(/"$/, ''),
+                text: l.elementText || (l.title ? l.title.replace(/^Clicked Link: "/, '').replace(/"$/, '') : 'Link'),
                 url: l.targetUrl || l.url || '',
                 isExternal: !!l.isExternal
             }));
@@ -2452,7 +2622,7 @@ app.get('/api/dashboard/report/daily', authenticateToken, async (req, res) => {
             // Extract Redirects
             const redirSteps = (s.journey || []).filter(j => j.type === 'page_redirect');
             const redirects = redirSteps.map(r => ({
-                detail: r.detail || r.title,
+                detail: r.detail || r.title || 'Page Navigation',
                 target: r.targetUrl || r.url || ''
             }));
             dayGroup.metrics.redirectsCount += redirects.length;
@@ -2550,7 +2720,17 @@ app.get('/api/dashboard/leads', authenticateToken, async (req, res) => {
         if (leads.length === 0) {
             leads = Array.from(memStore.leads.values()).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         }
-        res.json(leads);
+        // Deduplicate CRM lead list by unique contact (email / phone / sessionId)
+        const seenCandidate = new Set();
+        const dedupedLeads = [];
+        for (const lead of leads) {
+            const candKey = (lead.email || lead.leadData?.email || lead.phone || lead.leadData?.phone || lead.sessionId || lead._id).toLowerCase();
+            if (!seenCandidate.has(candKey)) {
+                seenCandidate.add(candKey);
+                dedupedLeads.push(lead);
+            }
+        }
+        res.json(dedupedLeads);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -2817,7 +2997,15 @@ app.get('/api/dashboard/export/csv', authenticateToken, async (req, res) => {
             if (leads.length === 0) leads = Array.from(memStore.leads.values());
 
             if (dateFilter) {
-                leads = leads.filter(l => (l.createdAt || '').toString().startsWith(dateFilter));
+                leads = leads.filter(l => {
+                    const rawDate = l.createdAt;
+                    if (!rawDate) return false;
+                    try {
+                        return new Date(rawDate).toISOString().slice(0, 10).startsWith(dateFilter);
+                    } catch (e) {
+                        return false;
+                    }
+                });
             }
 
             let csv = 'Candidate_Name,Phone,Email,Status,Score,Notes,City,Country,Referrer,Entry_Page,Created_At\n';
@@ -2838,8 +3026,13 @@ app.get('/api/dashboard/export/csv', authenticateToken, async (req, res) => {
 
         if (dateFilter) {
             sessions = sessions.filter(s => {
-                const d = (s.startTime || s.createdAt || '').toString();
-                return d.startsWith(dateFilter);
+                const rawDate = s.startTime || s.createdAt;
+                if (!rawDate) return false;
+                try {
+                    return new Date(rawDate).toISOString().slice(0, 10).startsWith(dateFilter);
+                } catch (e) {
+                    return false;
+                }
             });
         }
 
@@ -2885,7 +3078,7 @@ app.get('/api/dashboard/export/csv', authenticateToken, async (req, res) => {
 // Single Session Download Dossier (JSON or CSV)
 app.get(['/api/dashboard/sessions/:id/export', '/api/dashboard/session/:id/export'], authenticateToken, async (req, res) => {
     try {
-        const sid = (req.params.id || '').replace(/^Replay:\s*/i, '').trim();
+        const sid = decodeURIComponent(req.params.id || '').replace(/^(?:Replay:\s*)+/i, '').trim();
         const format = (req.query.format || 'json').toLowerCase();
 
         let s = null;

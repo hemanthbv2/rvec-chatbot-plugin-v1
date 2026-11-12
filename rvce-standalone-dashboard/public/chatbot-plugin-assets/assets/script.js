@@ -3948,37 +3948,47 @@ const chatW=$('chatWindow'),fab=$('chatFab'),badge=$('fabBadge'),msgs=$('chatMes
 const typing=$('typingIndicator'),inp=$('userInput'),sendB=$('sendBtn');
 const toneS=$('toneSwitch'),toneL=$('toneLabel'),emojiB=$('emojiBtn'),micB=$('micBtn'),sugs=$('quickSuggestions'),clearB=$('clearBtn'),closeHeaderB=$('headerCloseBtn');
 
-fab.addEventListener('click',()=>{
-    chatOpen=!chatOpen;
-    chatW.classList.toggle('open',chatOpen);
-    fab.classList.toggle('active',chatOpen);
-    fab.setAttribute('aria-expanded',chatOpen);
-    if(chatOpen){
-        if(badge) badge.classList.add('hidden');
-        inp.focus();
-        if(typeof rvceTrackEvent==='function'){
-            rvceTrackEvent('bot_open',{pagePath:window.location.pathname,pageUrl:window.location.href,referrer:document.referrer||'',title:document.title});
+function toggleChat(forceOpen) {
+    if (typeof forceOpen === 'boolean') {
+        chatOpen = forceOpen;
+    } else {
+        chatOpen = !chatOpen;
+    }
+    if (chatW) chatW.classList.toggle('open', chatOpen);
+    if (fab) {
+        fab.classList.toggle('active', chatOpen);
+        fab.setAttribute('aria-expanded', chatOpen ? 'true' : 'false');
+    }
+    if (chatOpen) {
+        if (badge) badge.classList.add('hidden');
+        if (inp) inp.focus();
+        if (typeof loadState === 'function') loadState();
+        if (typeof rvceTrackEvent === 'function') {
+            rvceTrackEvent('bot_open', { pagePath: window.location.pathname, pageUrl: window.location.href, referrer: document.referrer || '', title: document.title });
         }
     } else {
-        if(badge) badge.classList.remove('hidden');
+        if (badge) badge.classList.remove('hidden');
+        if (typeof rvceTrackEvent === 'function') {
+            rvceTrackEvent('bot_close', { pagePath: window.location.pathname || '/' });
+        }
     }
-    if(typeof saveState!=='undefined')saveState();
-});
+    if (typeof saveState !== 'undefined') saveState();
+}
+if (typeof window !== 'undefined') {
+    window.toggleChat = toggleChat;
+}
+
+fab.addEventListener('click', () => toggleChat());
 if (closeHeaderB) {
     closeHeaderB.addEventListener('click', () => {
-        chatOpen = false;
-        chatW.classList.remove('open');
-        fab.classList.remove('active');
-        fab.setAttribute('aria-expanded', 'false');
-        if(badge) badge.classList.remove('hidden');
-        if (typeof saveState !== 'undefined') saveState();
+        toggleChat(false);
     });
 }
 if (toneS) {
     toneS.addEventListener('click',()=>{tone='pro';toneS.classList.add('pro');toneS.setAttribute('aria-checked','true');if(toneL)toneL.textContent='Professional'; if(typeof saveState!=='undefined')saveState();});
     toneS.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toneS.click();}});
 }
-emojiB.addEventListener('click',()=>{disOld();showMenu();});
+emojiB.addEventListener('click',()=>{disOld();handleAction('menu', '📋 Main Menu');});
 sugs.querySelectorAll('.suggestion-chip').forEach(c=>c.addEventListener('click',()=>process(c.dataset.query)));
 sendB.addEventListener('click',()=>{const t=inp.value.trim();if(t)process(t);});
 inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();const t=inp.value.trim();if(t){ document.getElementById('typeahead').classList.add('hidden'); process(t);}}});
@@ -4034,6 +4044,20 @@ document.addEventListener('click', (e) => {
 if(clearB) clearB.addEventListener('click', () => {
     msgs.innerHTML = '';
     SafeStorage.removeItem('rvce_chat_html');
+    SafeStorage.removeItem('rvce_chat_session');
+    try {
+        if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.removeItem('rvce_chat_html');
+            sessionStorage.removeItem('rvce_chat_session');
+        }
+    } catch(e) {}
+    if (typeof SESSION !== 'undefined') {
+        SESSION.lastIntent = null;
+        SESSION.history = [];
+        SESSION.navStack = [];
+        SESSION.pendingOverflows = [];
+        SESSION.reqYear = null;
+    }
     saveState();
     setTimeout(() => {
         addBot(T("Hey there! 👋 Welcome to RVCE — the place where engineers are crafted! Ask me anything about admissions, placements, campus, and more!","Hello! Welcome to RV College of Engineering. I'm here to help you with information about admissions, placements, campus facilities, and more."),[],true);
@@ -4100,6 +4124,11 @@ micB.addEventListener('click', () => {
 });
 
 /* =============== TELEMETRY & QUEUE =============== */
+const SESSION_TIMEOUT = 1800000; // 30 minutes in milliseconds
+if (typeof window !== 'undefined') {
+    window.SESSION_TIMEOUT = SESSION_TIMEOUT;
+}
+
 var currentSessionId = (function() {
     if (typeof window !== 'undefined' && window.rvceSessionId) return window.rvceSessionId;
     if (typeof window !== 'undefined' && window.rvceGetSessionId) return window.rvceGetSessionId();
@@ -4166,6 +4195,7 @@ function processTelemetryQueue() {
     formData.append('action', 'rvce_log_chat');
     formData.append('query', item.query);
     formData.append('intent_id', item.intent);
+    formData.append('session_id', currentSessionId);
     fetch(rvceChatbotAjax.ajaxUrl, { method: 'POST', body: formData })
         .then(r => { if(r.ok) { telemetryQueue.shift(); processTelemetryQueue(); } })
         .catch(() => {}); // Keep in queue if it fails
@@ -4708,12 +4738,22 @@ function getBotAvatarMarkup() {
 }
 
 function addUser(text) {
+    if (typeof SESSION !== 'undefined') {
+        if (!SESSION.history) SESSION.history = [];
+        SESSION.history.push({ role: 'user', text: text, time: Date.now() });
+        if (SESSION.history.length > 30) SESSION.history.shift();
+    }
     const m=document.createElement('div'); m.className='message user';
     m.innerHTML=`<div class="msg-av" style="width:28px; height:28px; min-width:28px; border-radius:8px; background:rgba(255,255,255,0.15); display:flex; align-items:center; justify-content:center; flex-shrink:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" style="width:14px; height:14px; stroke:#ffffff; fill:none; display:block;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div><div class="msg-body"><div class="msg-bubble">${esc(text)}</div></div>`;
     msgs.appendChild(m); scr();
 }
 
 function addBot(text, buttons, noMenu) {
+    if (typeof SESSION !== 'undefined' && text) {
+        if (!SESSION.history) SESSION.history = [];
+        SESSION.history.push({ role: 'bot', text: text, time: Date.now() });
+        if (SESSION.history.length > 30) SESSION.history.shift();
+    }
     const m=document.createElement('div'); m.className='message bot';
     let bh='';
     if(buttons && buttons.length){
@@ -4788,15 +4828,20 @@ function addBot(text, buttons, noMenu) {
     m.innerHTML = getBotAvatarMarkup() + `<div class="msg-body"><div class="msg-bubble">${fmt}</div>${bh}</div>`;
     msgs.appendChild(m);
     
-    m.querySelectorAll('.act-btn[data-action]').forEach(b=>b.addEventListener('click',()=>{disOld();handleAction(b.dataset.action);}));
+    m.querySelectorAll('.act-btn[data-action]').forEach(b=>b.addEventListener('click',()=>{disOld();handleAction(b.dataset.action, b.textContent.trim());}));
     scr();
 }
 
 function addBotWarn(text) {
+    if (typeof SESSION !== 'undefined' && text) {
+        if (!SESSION.history) SESSION.history = [];
+        SESSION.history.push({ role: 'bot', text: text, isWarn: true, time: Date.now() });
+        if (SESSION.history.length > 30) SESSION.history.shift();
+    }
     const m=document.createElement('div'); m.className='message bot';
     m.innerHTML = getBotAvatarMarkup() + `<div class="msg-body"><div class="msg-bubble warn">${text.replace(/\n/g,'<br>')}</div><div class="msg-btns"><button class="act-btn mn" data-action="menu">📋 Main Menu</button></div></div>`;
     msgs.appendChild(m);
-    m.querySelectorAll('.act-btn[data-action]').forEach(b=>b.addEventListener('click',()=>{disOld();handleAction(b.dataset.action);}));
+    m.querySelectorAll('.act-btn[data-action]').forEach(b=>b.addEventListener('click',()=>{disOld();handleAction(b.dataset.action, b.textContent.trim());}));
     scr();
 }
 
@@ -4858,7 +4903,13 @@ function showMenu() {
     setTimeout(()=>{hideTyp();addBot(T("Pick your adventure! 🗺️","How can I help? Choose a topic:"),btns,true);},400);
 }
 
-function handleAction(a) { 
+function handleAction(a, labelText) { 
+    const rawLabel = labelText || (typeof INTENT_LABELS !== 'undefined' && INTENT_LABELS[a]) || (a === 'menu' ? '📋 Main Menu' : (a === '_back' ? '🔙 Back' : a));
+    const cleanLabel = String(rawLabel).replace(/\s+/g, ' ').trim();
+    if (cleanLabel) {
+        addUser(cleanLabel);
+    }
+
     if (a === 'menu') { 
         logChatInteraction('[Selected: Menu]', 'menu', { botReply: 'Pick your adventure!' });
         showMenu(); 
@@ -4881,7 +4932,7 @@ function handleAction(a) {
     const r = getResponse(a); 
     if (!r) { showMenu(); return; } 
 
-    const actionLabel = (typeof INTENT_LABELS !== 'undefined' && INTENT_LABELS[a]) || a;
+    const actionLabel = cleanLabel || (typeof INTENT_LABELS !== 'undefined' && INTENT_LABELS[a]) || a;
     logChatInteraction(`[Selected: ${actionLabel}]`, a, { botReply: r.text || '', action: a, source: 'action_button' }); 
 
     if (typeof SESSION !== 'undefined' && SESSION.pendingOverflows) {
@@ -4928,17 +4979,152 @@ const SafeStorage = {
 
 /* =============== STATE PERSISTENCE =============== */
 function saveState() {
-    SafeStorage.setItem('rvce_chat_html', msgs.innerHTML);
+    if (!msgs) return;
+    const chatHtml = msgs.innerHTML;
+    SafeStorage.setItem('rvce_chat_html', chatHtml);
     SafeStorage.setItem('rvce_chat_tone', tone);
     SafeStorage.setItem('rvce_chat_open', chatOpen ? '1' : '0');
     SafeStorage.setItem('rvce_chat_time', Date.now().toString());
+    let sessionJson = '';
+    try {
+        if (typeof SESSION !== 'undefined') {
+            sessionJson = JSON.stringify({
+                lastIntent: SESSION.lastIntent || null,
+                history: (SESSION.history || []).slice(-30),
+                navStack: SESSION.navStack || [],
+                pendingOverflows: SESSION.pendingOverflows || [],
+                reqYear: SESSION.reqYear || null
+            });
+            SafeStorage.setItem('rvce_chat_session', sessionJson);
+        }
+    } catch(e) {}
+
+    try {
+        if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem('rvce_chat_html', chatHtml);
+            sessionStorage.setItem('rvce_chat_tone', tone);
+            sessionStorage.setItem('rvce_chat_open', chatOpen ? '1' : '0');
+            sessionStorage.setItem('rvce_chat_time', Date.now().toString());
+            if (sessionJson) sessionStorage.setItem('rvce_chat_session', sessionJson);
+        }
+    } catch(e) {}
+
     const sid = getSID();
     if (sid) {
         SafeStorage.setItem('rvce_sid', sid);
         try {
             if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('rvce_sid', sid);
+            if (typeof localStorage !== 'undefined') localStorage.setItem('rvce_sid', sid);
         } catch(e) {}
     }
+}
+
+function loadState() {
+    if (!msgs) return false;
+    let savedHtml = null;
+    let time = null;
+    try {
+        if (typeof sessionStorage !== 'undefined') time = sessionStorage.getItem('rvce_chat_time');
+    } catch(e) {}
+    if (!time) time = SafeStorage.getItem('rvce_chat_time');
+
+    // Clear history if older than 30 minutes (1800000 ms)
+    if (time && (Date.now() - parseInt(time) > SESSION_TIMEOUT)) {
+        SafeStorage.removeItem('rvce_chat_html');
+        SafeStorage.removeItem('rvce_chat_tone');
+        SafeStorage.removeItem('rvce_chat_open');
+        SafeStorage.removeItem('rvce_chat_time');
+        SafeStorage.removeItem('rvce_chat_session');
+        SafeStorage.removeItem('rvce_sid');
+        try {
+            if (typeof sessionStorage !== 'undefined') {
+                sessionStorage.removeItem('rvce_chat_html');
+                sessionStorage.removeItem('rvce_chat_tone');
+                sessionStorage.removeItem('rvce_chat_open');
+                sessionStorage.removeItem('rvce_chat_time');
+                sessionStorage.removeItem('rvce_chat_session');
+                sessionStorage.removeItem('rvce_sid');
+            }
+        } catch(e) {}
+        return false;
+    }
+
+    try {
+        if (typeof sessionStorage !== 'undefined') savedHtml = sessionStorage.getItem('rvce_chat_html');
+    } catch(e) {}
+    if (!savedHtml) savedHtml = SafeStorage.getItem('rvce_chat_html');
+
+    let savedSession = null;
+    try {
+        if (typeof sessionStorage !== 'undefined') savedSession = sessionStorage.getItem('rvce_chat_session');
+    } catch(e) {}
+    if (!savedSession) savedSession = SafeStorage.getItem('rvce_chat_session');
+
+    if (savedSession) {
+        try {
+            const parsed = JSON.parse(savedSession);
+            if (parsed && typeof SESSION !== 'undefined') {
+                if (parsed.lastIntent) SESSION.lastIntent = parsed.lastIntent;
+                if (Array.isArray(parsed.history)) SESSION.history = parsed.history;
+                if (Array.isArray(parsed.navStack)) SESSION.navStack = parsed.navStack;
+                if (Array.isArray(parsed.pendingOverflows)) SESSION.pendingOverflows = parsed.pendingOverflows;
+                if (parsed.reqYear) SESSION.reqYear = parsed.reqYear;
+            }
+        } catch(e) {}
+    }
+
+    let savedSid = null;
+    try {
+        if (typeof sessionStorage !== 'undefined') savedSid = sessionStorage.getItem('rvce_sid');
+    } catch(e) {}
+    if (!savedSid) savedSid = SafeStorage.getItem('rvce_sid');
+    if (savedSid) {
+        currentSessionId = savedSid;
+        if (typeof window !== 'undefined') window.rvceSessionId = savedSid;
+        try {
+            if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('rvce_sid', savedSid);
+        } catch(e) {}
+    }
+
+    if (savedHtml && savedHtml.trim().length > 0) {
+        if (msgs.innerHTML !== savedHtml) {
+            msgs.innerHTML = savedHtml;
+            msgs.querySelectorAll('.msg-av:not(.user .msg-av)').forEach(av => {
+                av.style.setProperty('background', '#ffffff', 'important');
+                av.style.setProperty('border', '1.5px solid rgba(227, 30, 36, 0.3)', 'important');
+                av.style.setProperty('padding', '2px', 'important');
+                const img = av.querySelector('img');
+                if (img) {
+                    img.style.setProperty('background', '#ffffff', 'important');
+                    img.style.setProperty('object-fit', 'contain', 'important');
+                    img.style.setProperty('display', 'block', 'important');
+                }
+            });
+            msgs.querySelectorAll('.act-btn[data-action]').forEach(b => {
+                if(!b.disabled) b.addEventListener('click', () => { disOld(); handleAction(b.dataset.action, b.textContent.trim()); });
+            });
+            scr();
+        }
+
+        let savedTone = null;
+        try {
+            if (typeof sessionStorage !== 'undefined') savedTone = sessionStorage.getItem('rvce_chat_tone');
+        } catch(e) {}
+        if (!savedTone) savedTone = SafeStorage.getItem('rvce_chat_tone');
+        if (savedTone === 'pro') {
+            tone = 'pro';
+            if (toneS) toneS.classList.add('pro');
+            if (toneL) toneL.textContent = 'Professional';
+        }
+        return true;
+    }
+    return false;
+}
+
+if (typeof window !== 'undefined') {
+    window.saveState = saveState;
+    window.loadState = loadState;
+    window.SESSION = SESSION;
 }
 
 const msgObserver = new MutationObserver(() => saveState());
@@ -4946,62 +5132,26 @@ msgObserver.observe(msgs, { childList: true, subtree: true });
 
 /* =============== INIT =============== */
 setTimeout(()=>{
-    let savedHtml = null;
-    const time = SafeStorage.getItem('rvce_chat_time');
-    // Clear history if older than 2 hours (7200000 ms)
-    if (time && (Date.now() - parseInt(time) > 7200000)) {
-        SafeStorage.removeItem('rvce_chat_html');
-        SafeStorage.removeItem('rvce_chat_tone');
-        SafeStorage.removeItem('rvce_chat_open');
-        SafeStorage.removeItem('rvce_chat_time');
-        SafeStorage.removeItem('rvce_sid');
-    } else {
-        savedHtml = SafeStorage.getItem('rvce_chat_html');
-        const savedSid = SafeStorage.getItem('rvce_sid');
-        if (savedSid) {
-            currentSessionId = savedSid;
-            if (typeof window !== 'undefined') window.rvceSessionId = savedSid;
-            try {
-                if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('rvce_sid', savedSid);
-            } catch(e) {}
-        }
-    }
+    const restored = loadState();
+    if (restored) {
+        let savedOpen = null;
+        try {
+            if (typeof sessionStorage !== 'undefined') savedOpen = sessionStorage.getItem('rvce_chat_open');
+        } catch(e) {}
+        if (!savedOpen) savedOpen = SafeStorage.getItem('rvce_chat_open');
 
-    if (savedHtml) {
-        // Restore previous chat state instantly
-        msgs.innerHTML = savedHtml;
-        // Normalize any cached avatars to ensure white background and visible logo
-        msgs.querySelectorAll('.msg-av:not(.user .msg-av)').forEach(av => {
-            av.style.setProperty('background', '#ffffff', 'important');
-            av.style.setProperty('border', '1.5px solid rgba(227, 30, 36, 0.3)', 'important');
-            av.style.setProperty('padding', '2px', 'important');
-            const img = av.querySelector('img');
-            if (img) {
-                img.style.setProperty('background', '#ffffff', 'important');
-                img.style.setProperty('object-fit', 'contain', 'important');
-                img.style.setProperty('display', 'block', 'important');
-            }
-        });
-        const savedTone = SafeStorage.getItem('rvce_chat_tone');
-        if (savedTone === 'pro') {
-            tone = 'pro';
-            if (toneS) toneS.classList.add('pro');
-            if (toneL) toneL.textContent = 'Professional';
-        }
-        if (SafeStorage.getItem('rvce_chat_open') === '1') {
+        if (savedOpen === '1') {
             chatOpen = true;
             if (chatW) chatW.classList.add('open');
-            if (fab) fab.classList.add('active');
+            if (fab) {
+                fab.classList.add('active');
+                fab.setAttribute('aria-expanded', 'true');
+            }
             if (badge) badge.classList.add('hidden');
         } else {
             chatOpen = false;
             if (badge) badge.classList.remove('hidden');
         }
-        
-        // Re-bind all historic action buttons
-        msgs.querySelectorAll('.act-btn[data-action]').forEach(b => {
-            if(!b.disabled) b.addEventListener('click',()=>{disOld();handleAction(b.dataset.action);});
-        });
         scr();
     } else {
         // Standard first-time load: resting closed with notification badge "1" visible (matching user specification)

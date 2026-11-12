@@ -425,27 +425,37 @@
         });
 
         const requests = [];
+        let wpSuccess = false;
+        let centralSuccess = false;
+        let supaSuccess = false;
+        let lastError = null;
 
         // 1. WordPress REST API (Local WP MySQL database)
         if (wpRestUrl) {
+            const wpEndpoint = wpRestUrl.includes('/logs') ? wpRestUrl : (wpRestUrl.replace(/\/+$/, '') + '/logs');
             requests.push(
-                fetch(wpRestUrl + '/logs', {
+                fetch(wpEndpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: payload
                 })
-                .then(r => { if (!r.ok) throw new Error('WP status ' + r.status); })
-                .catch(() => { /* silent graceful failover */ })
+                .then(r => {
+                    if (!r.ok) throw new Error('WP status ' + r.status);
+                    wpSuccess = true;
+                    return r;
+                })
+                .catch(err => {
+                    lastError = err;
+                })
             );
         }
 
         // 2. Central Backend API (Node.js Express / Vercel -> Dual writes to Supabase)
         let centralBase = vercelUrl;
-        if (!centralBase && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+        if (!centralBase && typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
             centralBase = 'http://localhost:3001';
         }
 
-        let centralSuccess = false;
         if (centralBase) {
             try {
                 const resp = await fetch(centralBase.replace(/\/+$/, '') + '/api/logs', {
@@ -455,9 +465,12 @@
                 });
                 if (resp.ok) {
                     centralSuccess = true;
+                } else {
+                    lastError = new Error('Central backend status ' + resp.status);
                 }
             } catch (err) {
                 centralSuccess = false;
+                lastError = err;
             }
         }
 
@@ -491,7 +504,7 @@
                 const botOpenBatchItem = batch.find(b => b.eventType === 'bot_open' || b.eventType === 'chat_open');
                 const botOpenedOnPage = botOpenBatchItem ? (botOpenBatchItem.data?.pagePath || window.location.pathname || '/') : '';
 
-                await Promise.allSettled([
+                const supaResults = await Promise.allSettled([
                     fetch(SUPABASE_REST_URL + '/interactions', {
                         method: 'POST',
                         headers: supaHeaders,
@@ -512,23 +525,100 @@
                         })
                     })
                 ]);
+                if (supaResults.some(r => r.status === 'fulfilled' && r.value && r.value.ok)) {
+                    supaSuccess = true;
+                }
             } catch (supaErr) {
-                /* silent failover */
+                lastError = supaErr;
             }
         }
 
         try {
             await Promise.allSettled(requests);
         } catch(e) {}
+
+        const anyEndpointConfigured = !!(wpRestUrl || centralBase);
+        const anySuccess = wpSuccess || centralSuccess || supaSuccess;
+
+        if (anyEndpointConfigured && !anySuccess && lastError) {
+            throw lastError;
+        }
+        return anySuccess;
+    }
+
+    const OFFLINE_STORAGE_KEY = 'rvce_offline_queue';
+    function saveOfflineQueue(batch) {
+        try {
+            if (typeof localStorage === 'undefined' || !batch || batch.length === 0) return;
+            const existingRaw = localStorage.getItem('rvce_offline_queue') || localStorage.getItem('rvce_offline_telemetry');
+            let existing = existingRaw ? JSON.parse(existingRaw) : [];
+            if (!Array.isArray(existing)) existing = [];
+            const combined = [...existing, ...batch];
+            const unique = [];
+            const seen = new Set();
+            for (const item of combined) {
+                const key = `${item.sessionId}_${item.timestamp}_${item.eventType}_${item.data?.query || item.data?.elementId || ''}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    unique.push(item);
+                }
+            }
+            const toSave = unique.slice(-1000);
+            localStorage.setItem('rvce_offline_queue', JSON.stringify(toSave));
+            localStorage.setItem('rvce_offline_telemetry', JSON.stringify(toSave));
+        } catch(e) {}
+    }
+
+    function loadOfflineQueue() {
+        try {
+            if (typeof localStorage === 'undefined') return [];
+            const existingRaw = localStorage.getItem('rvce_offline_queue') || localStorage.getItem('rvce_offline_telemetry');
+            if (!existingRaw) return [];
+            const existing = JSON.parse(existingRaw);
+            localStorage.removeItem('rvce_offline_queue');
+            localStorage.removeItem('rvce_offline_telemetry');
+            return Array.isArray(existing) ? existing : [];
+        } catch(e) {
+            return [];
+        }
     }
 
     async function flushQueue() {
-        if (isFlushing || telemetryQueue.length === 0) return;
+        if (isFlushing) return;
+
+        // Restore any buffered offline telemetry from localStorage
+        const offlineEvents = loadOfflineQueue();
+        if (offlineEvents.length > 0) {
+            telemetryQueue.unshift(...offlineEvents);
+        }
+
+        if (telemetryQueue.length === 0) return;
+
+        // If offline, serialize pending queue to localStorage without discarding
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            saveOfflineQueue(telemetryQueue);
+            return;
+        }
+
         isFlushing = true;
+        // DO NOT discard telemetryQueue before sendBatch() completes! Keep pending items on failure.
         const batch = [...telemetryQueue];
-        telemetryQueue = [];
         try {
             await sendBatch(batch);
+            // On success, slice off the successfully sent items
+            telemetryQueue = telemetryQueue.slice(batch.length);
+            if (telemetryQueue.length === 0) {
+                try {
+                    if (typeof localStorage !== 'undefined') {
+                        localStorage.removeItem('rvce_offline_queue');
+                        localStorage.removeItem('rvce_offline_telemetry');
+                    }
+                } catch(e) {}
+            }
+        } catch (err) {
+            // Keep pending items in telemetryQueue on failure!
+            // On network errors or offline, serialize pending queue so events are never dropped
+            saveOfflineQueue(telemetryQueue);
         } finally {
             isFlushing = false;
         }
@@ -537,12 +627,94 @@
     // Flush batch every 15 seconds
     setInterval(flushQueue, 15000);
 
-    // Final flush on window beforeunload with application/json Blob to prevent drops
+    // Automatically flush buffered offline telemetry upon reconnect
+    if (typeof window !== 'undefined') {
+        window.addEventListener('online', () => {
+            flushQueue();
+        });
+    }
+
+    // Unload Handlers: on visibilitychange (document.visibilityState === 'hidden') and beforeunload,
+    // dispatch to BOTH vercelUrl and wpRestUrl (WordPress REST API)
+    function sendUnloadTelemetry() {
+        const offlineEvents = loadOfflineQueue();
+        if (offlineEvents.length > 0) {
+            telemetryQueue.unshift(...offlineEvents);
+        }
+        if (telemetryQueue.length === 0) return;
+        const batch = [...telemetryQueue];
+        const { wpRestUrl, vercelUrl } = getEndpoints();
+        const subsite = getSubsite();
+        let centralBase = vercelUrl;
+        if (!centralBase && typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+            centralBase = 'http://localhost:3001';
+        }
+        const payload = JSON.stringify({
+            institute_id: 'rvce',
+            instituteId: 'rvce',
+            subsite: subsite,
+            site_category: subsite,
+            api_key: 'rvce_key_12345',
+            sessionId: SESSION_ID,
+            events: batch
+        });
+
+        // 1. Dispatch to Central Node / Vercel API
+        if (centralBase) {
+            const centralEndpoint = centralBase.replace(/\/+$/, '') + '/api/logs';
+            let sent = false;
+            if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+                try {
+                    const blob = new Blob([payload], { type: 'application/json' });
+                    sent = navigator.sendBeacon(centralEndpoint, blob);
+                } catch (beaconErr) {
+                    try {
+                        sent = navigator.sendBeacon(centralEndpoint, payload);
+                    } catch (e) {}
+                }
+            }
+            if (!sent && typeof fetch !== 'undefined') {
+                try {
+                    fetch(centralEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(() => {});
+                } catch (e) {}
+            }
+        }
+
+        // 2. Dispatch to WordPress REST API endpoint (Dual-write retention)
+        if (wpRestUrl) {
+            const wpEndpoint = wpRestUrl.includes('/logs') ? wpRestUrl : (wpRestUrl.replace(/\/+$/, '') + '/logs');
+            let sentWp = false;
+            if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+                try {
+                    const wpBlob = new Blob([payload], { type: 'application/json' });
+                    sentWp = navigator.sendBeacon(wpEndpoint, wpBlob);
+                } catch (wpErr) {
+                    try {
+                        sentWp = navigator.sendBeacon(wpEndpoint, payload);
+                    } catch (e) {}
+                }
+            }
+            if (!sentWp && typeof fetch !== 'undefined') {
+                try {
+                    fetch(wpEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(() => {});
+                } catch (e) {}
+            }
+        }
+
+        // On offline, buffer to localStorage so events are never dropped
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            saveOfflineQueue(batch);
+        }
+        telemetryQueue = [];
+    }
+
+    // Final flush on window beforeunload with application/json Blob to prevent drops (Dual-Write)
     window.addEventListener('beforeunload', () => {
+        sendUnloadTelemetry();
         if (telemetryQueue.length === 0) return;
         const batch = [...telemetryQueue];
         telemetryQueue = [];
-        const { vercelUrl } = getEndpoints();
+        const { wpRestUrl, vercelUrl } = getEndpoints();
         const subsite = getSubsite();
         let centralBase = vercelUrl;
         if (!centralBase && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
@@ -557,6 +729,8 @@
             sessionId: SESSION_ID,
             events: batch
         });
+
+        // 1. Dispatch to Central Node / Vercel API
         if (navigator.sendBeacon && centralBase) {
             try {
                 const blob = new Blob([payload], { type: 'application/json' });
@@ -564,6 +738,23 @@
             } catch (beaconErr) {
                 navigator.sendBeacon(centralBase.replace(/\/+$/, '') + '/api/logs', payload);
             }
+        }
+
+        // 2. Dispatch to WordPress REST API endpoint (Dual-write retention)
+        if (navigator.sendBeacon && wpRestUrl) {
+            try {
+                const wpEndpoint = wpRestUrl.includes('/logs') ? wpRestUrl : (wpRestUrl.replace(/\/+$/, '') + '/logs');
+                const wpBlob = new Blob([payload], { type: 'application/json' });
+                navigator.sendBeacon(wpEndpoint, wpBlob);
+            } catch (wpErr) {
+                navigator.sendBeacon(wpRestUrl, payload);
+            }
+        }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+            sendUnloadTelemetry();
         }
     });
 
@@ -582,7 +773,16 @@
     // Standardized RVCETelemetry API Interface (Supports Simulator, Micro-interactions & Test Suites)
     window.RVCETelemetry = {
         getSessionId: () => SESSION_ID,
+        SESSION_TIMEOUT_MS: SESSION_TIMEOUT_MS,
         trackEvent: trackEvent,
+        flushQueue: flushQueue,
+        getQueue: () => telemetryQueue,
+        getOfflineQueue: () => {
+            try {
+                const raw = localStorage.getItem('rvce_offline_queue') || localStorage.getItem('rvce_offline_telemetry');
+                return raw ? JSON.parse(raw) : [];
+            } catch(e) { return []; }
+        },
         trackBotOpen: window.rvceTrackBotOpen,
         trackBotClose: function() {
             trackEvent('bot_close', { pagePath: window.location.pathname || '/' }, true);
@@ -608,6 +808,8 @@
             }, true);
         }
     };
+    window.rvceFlushQueue = flushQueue;
+    window.SESSION_TIMEOUT_MS = SESSION_TIMEOUT_MS;
 
     // Automatic Cross-Portal Link Decoration for seamless session handoff
     function decorateRvceUrl(rawUrl) {

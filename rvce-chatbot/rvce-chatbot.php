@@ -23,7 +23,8 @@ define('RVCE_CHATBOT_DIR_URL', plugin_dir_url(__FILE__));
 /**
  * Register Settings & Analytics Dashboard in WordPress Admin
  */
-function rvce_chatbot_add_admin_menu() {
+function rvce_chatbot_add_admin_menu()
+{
     add_menu_page(
         __('RVCE Chatbot Settings', 'rvce-chatbot'),
         __('RVCE Chatbot', 'rvce-chatbot'),
@@ -48,7 +49,8 @@ add_action('admin_menu', 'rvce_chatbot_add_admin_menu');
 /**
  * Sanitize and normalize backend / Vercel URL
  */
-function rvce_chatbot_sanitize_vercel_url($url) {
+function rvce_chatbot_sanitize_vercel_url($url)
+{
     $url = trim($url);
     if (empty($url)) {
         return '';
@@ -64,7 +66,8 @@ function rvce_chatbot_sanitize_vercel_url($url) {
 /**
  * Get Clean Vercel / Central Backend Base URL
  */
-function rvce_chatbot_get_clean_vercel_url() {
+function rvce_chatbot_get_clean_vercel_url()
+{
     $url = get_option('rvce_chatbot_vercel_url', '');
     return rvce_chatbot_sanitize_vercel_url($url);
 }
@@ -72,7 +75,8 @@ function rvce_chatbot_get_clean_vercel_url() {
 /**
  * Render the Analytics Dashboard via Secure iframe
  */
-function rvce_chatbot_analytics_dashboard_page() {
+function rvce_chatbot_analytics_dashboard_page()
+{
     $vercel_url = rvce_chatbot_get_clean_vercel_url();
     $mode = isset($_GET['view']) ? sanitize_text_field($_GET['view']) : 'live';
 
@@ -86,29 +90,44 @@ function rvce_chatbot_analytics_dashboard_page() {
     ?>
     <div class="wrap" style="margin: 0; padding: 0; max-width: 100%; min-height: 900px; background: #0b0f19;">
         <!-- Top Navigation Bar inside WP Admin -->
-        <div style="padding: 12px 24px; background: #0f172a; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center;">
+        <div
+            style="padding: 12px 24px; background: #0f172a; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center;">
             <div style="display: flex; align-items: center; gap: 14px;">
-                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981;"></span>
+                <span
+                    style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981;"></span>
                 <span style="color: #fff; font-weight: 800; font-size: 15px;">RVCE Analytics Command Center</span>
-                <span style="background: rgba(99,102,241,0.18); border: 1px solid rgba(99,102,241,0.35); padding: 3px 10px; border-radius: 6px; font-size: 11px; color: #818cf8; font-weight: 700;">
+                <span
+                    style="background: rgba(99,102,241,0.18); border: 1px solid rgba(99,102,241,0.35); padding: 3px 10px; border-radius: 6px; font-size: 11px; color: #818cf8; font-weight: 700;">
                     <?php echo $is_live ? '⚡ Connected to Vercel & Supabase' : '📁 Local WordPress Database'; ?>
                 </span>
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-                <?php if ($is_live) : ?>
-                    <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot-dashboard&view=local')); ?>" class="button" style="background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); color: #e2e8f0; font-weight: 600;">📁 View Local WP Analytics</a>
-                <?php else : ?>
-                    <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot-dashboard&view=live')); ?>" class="button" style="background: rgba(99,102,241,0.25); border-color: #6366f1; color: #c7d2fe; font-weight: 600;">⚡ View Central Command Hub</a>
+                <?php if ($is_live): ?>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot-dashboard&view=local')); ?>"
+                        class="button"
+                        style="background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); color: #e2e8f0; font-weight: 600;">📁
+                        View Local WP Analytics</a>
+                <?php else: ?>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot-dashboard&view=live')); ?>"
+                        class="button"
+                        style="background: rgba(99,102,241,0.25); border-color: #6366f1; color: #c7d2fe; font-weight: 600;">⚡
+                        View Central Command Hub</a>
                 <?php endif; ?>
-                <?php if (!empty($vercel_url)) : ?>
-                    <a href="<?php echo esc_url($dashboard_url); ?>" target="_blank" class="button" style="background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); color: #fff;">↗ Open Full Screen</a>
+                <?php if (!empty($vercel_url)): ?>
+                    <a href="<?php echo esc_url($dashboard_url); ?>" target="_blank" class="button"
+                        style="background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); color: #fff;">↗ Open
+                        Full Screen</a>
                 <?php endif; ?>
-                <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot')); ?>" class="button button-primary">⚙ Chatbot Settings</a>
+                <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot')); ?>" class="button button-primary">⚙
+                    Chatbot Settings</a>
             </div>
         </div>
 
         <!-- Embedded Full Dashboard -->
-        <iframe src="<?php echo esc_url($dashboard_url); ?>" style="width: 100%; height: calc(100vh - 90px); min-height: 850px; border: none;" allow="clipboard-write; clipboard-read; cross-origin-isolated" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"></iframe>
+        <iframe src="<?php echo esc_url($dashboard_url); ?>"
+            style="width: 100%; height: calc(100vh - 90px); min-height: 850px; border: none;"
+            allow="clipboard-write; clipboard-read; cross-origin-isolated"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads"></iframe>
     </div>
     <?php
 }
@@ -116,7 +135,8 @@ function rvce_chatbot_analytics_dashboard_page() {
 /**
  * Secure Admin-Post Router for Dashboard Tabs
  */
-function rvce_chatbot_render_dashboard_tab() {
+function rvce_chatbot_render_dashboard_tab()
+{
     if (!current_user_can('manage_options')) {
         wp_die(__('Unauthorized user access.', 'rvce-chatbot'));
     }
@@ -155,26 +175,28 @@ add_action('admin_post_rvce_chatbot_dashboard_view', 'rvce_chatbot_render_dashbo
 /**
  * Fallback Native WordPress Analytics Dashboard
  */
-function rvce_chatbot_render_fallback_dashboard($active_tab = 'index') {
+function rvce_chatbot_render_fallback_dashboard($active_tab = 'index')
+{
     global $wpdb;
     $table_interactions = $wpdb->prefix . 'rvce_interactions';
-    $table_leads        = $wpdb->prefix . 'rvce_leads';
-    $table_logs         = $wpdb->prefix . 'rvce_chat_logs';
+    $table_leads = $wpdb->prefix . 'rvce_leads';
+    $table_logs = $wpdb->prefix . 'rvce_chat_logs';
 
     $has_interactions = ($wpdb->get_var("SHOW TABLES LIKE '{$table_interactions}'") === $table_interactions);
-    $has_leads        = ($wpdb->get_var("SHOW TABLES LIKE '{$table_leads}'") === $table_leads);
-    $has_logs         = ($wpdb->get_var("SHOW TABLES LIKE '{$table_logs}'") === $table_logs);
+    $has_leads = ($wpdb->get_var("SHOW TABLES LIKE '{$table_leads}'") === $table_leads);
+    $has_logs = ($wpdb->get_var("SHOW TABLES LIKE '{$table_logs}'") === $table_logs);
 
-    $total_interactions = $has_interactions ? (int)$wpdb->get_var("SELECT COUNT(*) FROM {$table_interactions}") : 0;
-    $total_leads        = $has_leads ? (int)$wpdb->get_var("SELECT COUNT(*) FROM {$table_leads}") : 0;
-    $total_logs         = $has_logs ? (int)$wpdb->get_var("SELECT COUNT(*) FROM {$table_logs}") : 0;
-    $unique_sessions    = $has_interactions ? (int)$wpdb->get_var("SELECT COUNT(DISTINCT session_id) FROM {$table_interactions}") : 0;
+    $total_interactions = $has_interactions ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table_interactions}") : 0;
+    $total_leads = $has_leads ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table_leads}") : 0;
+    $total_logs = $has_logs ? (int) $wpdb->get_var("SELECT COUNT(*) FROM {$table_logs}") : 0;
+    $unique_sessions = $has_interactions ? (int) $wpdb->get_var("SELECT COUNT(DISTINCT session_id) FROM {$table_interactions}") : 0;
 
     $recent_leads = $has_leads ? $wpdb->get_results("SELECT * FROM {$table_leads} ORDER BY created_at DESC LIMIT 10", ARRAY_A) : array();
     $recent_queries = $has_logs ? $wpdb->get_results("SELECT * FROM {$table_logs} ORDER BY created_at DESC LIMIT 15", ARRAY_A) : array();
     ?>
     <!DOCTYPE html>
     <html lang="en">
+
     <head>
         <meta charset="UTF-8">
         <title>RVCE Chatbot — Analytics Dashboard</title>
@@ -189,34 +211,139 @@ function rvce_chatbot_render_fallback_dashboard($active_tab = 'index') {
                 --accent: #3B82F6;
                 --success: #10B981;
             }
-            * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-            body { background: var(--bg); color: var(--text); padding: 24px; min-height: 100vh; }
-            .notice-banner { background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 10px; padding: 14px 18px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-            .notice-banner strong { color: #60A5FA; }
-            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px; margin-bottom: 28px; }
-            .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
-            .stat-label { font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
-            .stat-val { font-size: 32px; font-weight: 700; color: #fff; }
-            .section-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px; margin-bottom: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
-            .section-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-            table { width: 100%; border-collapse: collapse; font-size: 13px; }
-            th { text-align: left; padding: 10px 12px; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 600; }
-            td { padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
-            tr:hover td { background: rgba(255,255,255,0.02); }
-            .badge { display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; background: rgba(59,130,246,0.18); color: #60A5FA; }
-            .badge-lead { background: rgba(16,185,129,0.18); color: #34D399; }
+
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            }
+
+            body {
+                background: var(--bg);
+                color: var(--text);
+                padding: 24px;
+                min-height: 100vh;
+            }
+
+            .notice-banner {
+                background: rgba(59, 130, 246, 0.12);
+                border: 1px solid rgba(59, 130, 246, 0.4);
+                border-radius: 10px;
+                padding: 14px 18px;
+                margin-bottom: 24px;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+            }
+
+            .notice-banner strong {
+                color: #60A5FA;
+            }
+
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 18px;
+                margin-bottom: 28px;
+            }
+
+            .stat-card {
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 20px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            }
+
+            .stat-label {
+                font-size: 13px;
+                color: var(--text-dim);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 6px;
+            }
+
+            .stat-val {
+                font-size: 32px;
+                font-weight: 700;
+                color: #fff;
+            }
+
+            .section-card {
+                background: var(--card);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 22px;
+                margin-bottom: 24px;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            }
+
+            .section-title {
+                font-size: 18px;
+                font-weight: 600;
+                margin-bottom: 16px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 13px;
+            }
+
+            th {
+                text-align: left;
+                padding: 10px 12px;
+                color: var(--text-dim);
+                border-bottom: 1px solid var(--border);
+                font-weight: 600;
+            }
+
+            td {
+                padding: 12px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            }
+
+            tr:hover td {
+                background: rgba(255, 255, 255, 0.02);
+            }
+
+            .badge {
+                display: inline-block;
+                padding: 3px 8px;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 600;
+                background: rgba(59, 130, 246, 0.18);
+                color: #60A5FA;
+            }
+
+            .badge-lead {
+                background: rgba(16, 185, 129, 0.18);
+                color: #34D399;
+            }
         </style>
     </head>
+
     <body>
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
             <div style="display: flex; align-items: center; gap: 12px;">
-                <div style="width: 36px; height: 36px; border-radius: 8px; background: var(--primary); display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 18px; color: #fff;">R</div>
+                <div
+                    style="width: 36px; height: 36px; border-radius: 8px; background: var(--primary); display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 18px; color: #fff;">
+                    R</div>
                 <div>
                     <h1 style="font-size: 22px; font-weight: 700; margin: 0;">RVCE Chatbot — Analytics Dashboard</h1>
-                    <p style="font-size: 13px; color: var(--text-dim); margin-top: 2px;">Local WordPress Real-time Telemetry & Inquiries</p>
+                    <p style="font-size: 13px; color: var(--text-dim); margin-top: 2px;">Local WordPress Real-time Telemetry
+                        & Inquiries</p>
                 </div>
             </div>
-            <button onclick="window.location.reload()" style="background: var(--card); border: 1px solid var(--border); color: #fff; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;">Refresh Data ⟳</button>
+            <button onclick="window.location.reload()"
+                style="background: var(--card); border: 1px solid var(--border); color: #fff; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;">Refresh
+                Data ⟳</button>
         </div>
 
         <div class="stats-grid">
@@ -242,7 +369,8 @@ function rvce_chatbot_render_fallback_dashboard($active_tab = 'index') {
         <div class="section-card">
             <div class="section-title">🎓 Recent Prospective Student Leads</div>
             <?php if (empty($recent_leads)): ?>
-                <p style="color: var(--text-dim); font-size: 13px;">No admission leads captured yet. Student form inquiries will appear here automatically.</p>
+                <p style="color: var(--text-dim); font-size: 13px;">No admission leads captured yet. Student form inquiries will
+                    appear here automatically.</p>
             <?php else: ?>
                 <table>
                     <thead>
@@ -254,20 +382,21 @@ function rvce_chatbot_render_fallback_dashboard($active_tab = 'index') {
                         </tr>
                     </thead>
                     <tbody>
-                    <?php foreach ($recent_leads as $lead):
-                        $ldata = json_decode($lead['lead_data'], true);
-                        $name = isset($ldata['name']) ? esc_html($ldata['name']) : 'Visitor';
-                        $email = isset($ldata['email']) ? esc_html($ldata['email']) : '-';
-                        $phone = isset($ldata['phone']) ? esc_html($ldata['phone']) : '-';
-                        $msg = isset($ldata['message']) ? esc_html($ldata['message']) : (isset($ldata['notes']) ? esc_html($ldata['notes']) : '-');
-                    ?>
-                        <tr>
-                            <td style="color: var(--text-dim); white-space: nowrap;"><?php echo esc_html($lead['created_at']); ?></td>
-                            <td><strong><?php echo $name; ?></strong></td>
-                            <td><?php echo $email . ($phone !== '-' ? ' | ' . $phone : ''); ?></td>
-                            <td><span class="badge badge-lead"><?php echo $msg; ?></span></td>
-                        </tr>
-                    <?php endforeach; ?>
+                        <?php foreach ($recent_leads as $lead):
+                            $ldata = json_decode($lead['lead_data'], true);
+                            $name = isset($ldata['name']) ? esc_html($ldata['name']) : 'Visitor';
+                            $email = isset($ldata['email']) ? esc_html($ldata['email']) : '-';
+                            $phone = isset($ldata['phone']) ? esc_html($ldata['phone']) : '-';
+                            $msg = isset($ldata['message']) ? esc_html($ldata['message']) : (isset($ldata['notes']) ? esc_html($ldata['notes']) : '-');
+                            ?>
+                            <tr>
+                                <td style="color: var(--text-dim); white-space: nowrap;">
+                                    <?php echo esc_html($lead['created_at']); ?></td>
+                                <td><strong><?php echo $name; ?></strong></td>
+                                <td><?php echo $email . ($phone !== '-' ? ' | ' . $phone : ''); ?></td>
+                                <td><span class="badge badge-lead"><?php echo $msg; ?></span></td>
+                            </tr>
+                        <?php endforeach; ?>
                     </tbody>
                 </table>
             <?php endif; ?>
@@ -277,7 +406,8 @@ function rvce_chatbot_render_fallback_dashboard($active_tab = 'index') {
         <div class="section-card">
             <div class="section-title">💬 Recent Chatbot Inquiries & Questions</div>
             <?php if (empty($recent_queries)): ?>
-                <p style="color: var(--text-dim); font-size: 13px;">No chat queries logged yet. Incoming student questions will appear here in real time.</p>
+                <p style="color: var(--text-dim); font-size: 13px;">No chat queries logged yet. Incoming student questions will
+                    appear here in real time.</p>
             <?php else: ?>
                 <table>
                     <thead>
@@ -289,19 +419,22 @@ function rvce_chatbot_render_fallback_dashboard($active_tab = 'index') {
                         </tr>
                     </thead>
                     <tbody>
-                    <?php foreach ($recent_queries as $q): ?>
-                        <tr>
-                            <td style="color: var(--text-dim); white-space: nowrap;"><?php echo esc_html($q['created_at']); ?></td>
-                            <td style="color: #fff; font-weight: 500;"><?php echo esc_html($q['query']); ?></td>
-                            <td><span class="badge"><?php echo esc_html($q['intent_id']); ?></span></td>
-                            <td style="color: var(--text-dim); font-family: monospace; font-size: 11px;"><?php echo esc_html(substr($q['session_id'], 0, 16)); ?>...</td>
-                        </tr>
-                    <?php endforeach; ?>
+                        <?php foreach ($recent_queries as $q): ?>
+                            <tr>
+                                <td style="color: var(--text-dim); white-space: nowrap;"><?php echo esc_html($q['created_at']); ?>
+                                </td>
+                                <td style="color: #fff; font-weight: 500;"><?php echo esc_html($q['query']); ?></td>
+                                <td><span class="badge"><?php echo esc_html($q['intent_id']); ?></span></td>
+                                <td style="color: var(--text-dim); font-family: monospace; font-size: 11px;">
+                                    <?php echo esc_html(substr($q['session_id'], 0, 16)); ?>...</td>
+                            </tr>
+                        <?php endforeach; ?>
                     </tbody>
                 </table>
             <?php endif; ?>
         </div>
     </body>
+
     </html>
     <?php
 }
@@ -309,7 +442,8 @@ function rvce_chatbot_render_fallback_dashboard($active_tab = 'index') {
 /**
  * Register Settings and Sanitization
  */
-function rvce_chatbot_register_settings() {
+function rvce_chatbot_register_settings()
+{
     register_setting('rvce_chatbot_options_group', 'rvce_chatbot_enabled', array('sanitize_callback' => 'sanitize_text_field'));
     register_setting('rvce_chatbot_options_group', 'rvce_chatbot_title', array('sanitize_callback' => 'sanitize_text_field'));
     register_setting('rvce_chatbot_options_group', 'rvce_chatbot_status_text', array('sanitize_callback' => 'sanitize_text_field'));
@@ -326,29 +460,41 @@ add_action('admin_init', 'rvce_chatbot_register_settings');
 /**
  * Settings Page HTML Rendering
  */
-function rvce_chatbot_settings_page() {
+function rvce_chatbot_settings_page()
+{
     $default_logo = RVCE_CHATBOT_DIR_URL . 'logo.png';
     ?>
     <div class="wrap" style="max-width: 900px;">
         <div style="display:flex; align-items:center; gap:14px; margin-top:20px; margin-bottom:10px;">
-            <div style="width:40px; height:40px; background:#e31e24; border-radius:10px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:20px; box-shadow:0 0 15px rgba(227,30,36,0.4);">R</div>
+            <div
+                style="width:40px; height:40px; background:#e31e24; border-radius:10px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:800; font-size:20px; box-shadow:0 0 15px rgba(227,30,36,0.4);">
+                R</div>
             <div>
-                <h1 style="margin:0; font-size:24px;"><?php echo esc_html(__('RVCE Chatbot Settings', 'rvce-chatbot')); ?></h1>
-                <p style="margin:2px 0 0; color:#64748b;"><?php echo esc_html(__('Configure display titles, behavior, notification emails, and dual-write telemetry endpoints.', 'rvce-chatbot')); ?></p>
+                <h1 style="margin:0; font-size:24px;"><?php echo esc_html(__('RVCE Chatbot Settings', 'rvce-chatbot')); ?>
+                </h1>
+                <p style="margin:2px 0 0; color:#64748b;">
+                    <?php echo esc_html(__('Configure display titles, behavior, notification emails, and dual-write telemetry endpoints.', 'rvce-chatbot')); ?>
+                </p>
             </div>
         </div>
 
         <!-- Command Center Live Access Banner -->
-        <div style="background: linear-gradient(135deg, #0f172a, #1e293b); border: 1px solid #334155; border-radius: 12px; padding: 20px 26px; margin: 20px 0 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+        <div
+            style="background: linear-gradient(135deg, #0f172a, #1e293b); border: 1px solid #334155; border-radius: 12px; padding: 20px 26px; margin: 20px 0 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
             <div>
                 <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
                     <span style="color: #818cf8; font-size: 18px;">📊</span>
-                    <h2 style="margin: 0; color: #fff; font-size: 17px; font-weight: 800;"><?php _e('Analytics Command Center Inside WordPress', 'rvce-chatbot'); ?></h2>
+                    <h2 style="margin: 0; color: #fff; font-size: 17px; font-weight: 800;">
+                        <?php _e('Analytics Command Center Inside WordPress', 'rvce-chatbot'); ?></h2>
                 </div>
-                <p style="margin: 0; color: #94a3b8; font-size: 13px;"><?php _e('View live visitor sessions, Instagram acquisition tags, search keywords, and full clickstream replays right here in your WordPress admin panel.', 'rvce-chatbot'); ?></p>
+                <p style="margin: 0; color: #94a3b8; font-size: 13px;">
+                    <?php _e('View live visitor sessions, Instagram acquisition tags, search keywords, and full clickstream replays right here in your WordPress admin panel.', 'rvce-chatbot'); ?>
+                </p>
             </div>
             <div>
-                <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot-dashboard')); ?>" class="button button-primary" style="height: 38px; line-height: 36px; padding: 0 18px; font-weight: 700; font-size: 13px; background: #6366f1; border-color: #4f46e5;">
+                <a href="<?php echo esc_url(admin_url('admin.php?page=rvce-chatbot-dashboard')); ?>"
+                    class="button button-primary"
+                    style="height: 38px; line-height: 36px; padding: 0 18px; font-weight: 700; font-size: 13px; background: #6366f1; border-color: #4f46e5;">
                     📊 Open Dashboard
                 </a>
             </div>
@@ -362,7 +508,8 @@ function rvce_chatbot_settings_page() {
             <table class="form-table" style="width: 100%;">
                 <!-- Enabled Option -->
                 <tr valign="top">
-                    <th scope="row" style="width: 220px; font-weight: bold;"><?php _e('Enable Chatbot Widget', 'rvce-chatbot'); ?></th>
+                    <th scope="row" style="width: 220px; font-weight: bold;">
+                        <?php _e('Enable Chatbot Widget', 'rvce-chatbot'); ?></th>
                     <td>
                         <label>
                             <input type="checkbox" name="rvce_chatbot_enabled" value="1" <?php checked('1', get_option('rvce_chatbot_enabled', '1')); ?> />
@@ -378,7 +525,8 @@ function rvce_chatbot_settings_page() {
                         <input type="text" name="rvce_chatbot_title"
                             value="<?php echo esc_attr(get_option('rvce_chatbot_title', 'RVCE Assistant')); ?>"
                             class="regular-text" style="width: 100%; max-width: 480px;" required />
-                        <p class="description"><?php _e('The header title displayed at the top of the chat window.', 'rvce-chatbot'); ?></p>
+                        <p class="description">
+                            <?php _e('The header title displayed at the top of the chat window.', 'rvce-chatbot'); ?></p>
                     </td>
                 </tr>
 
@@ -389,7 +537,8 @@ function rvce_chatbot_settings_page() {
                         <input type="text" name="rvce_chatbot_status_text"
                             value="<?php echo esc_attr(get_option('rvce_chatbot_status_text', 'Online — Ready to help')); ?>"
                             class="regular-text" style="width: 100%; max-width: 480px;" required />
-                        <p class="description"><?php _e('Status text beneath the title (e.g. Online — Ready to help).', 'rvce-chatbot'); ?></p>
+                        <p class="description">
+                            <?php _e('Status text beneath the title (e.g. Online — Ready to help).', 'rvce-chatbot'); ?></p>
                     </td>
                 </tr>
 
@@ -400,46 +549,62 @@ function rvce_chatbot_settings_page() {
                         <textarea name="rvce_chatbot_welcome_text" rows="3" class="large-text"
                             style="width: 100%; max-width: 480px;"
                             required><?php echo esc_textarea(get_option('rvce_chatbot_welcome_text', 'Hi there! Have questions about RVCE admissions, placements, or courses? Chat with us!')); ?></textarea>
-                        <p class="description"><?php _e('Teaser bubble displayed next to the floating launcher button.', 'rvce-chatbot'); ?></p>
+                        <p class="description">
+                            <?php _e('Teaser bubble displayed next to the floating launcher button.', 'rvce-chatbot'); ?>
+                        </p>
                     </td>
                 </tr>
 
                 <!-- Website Scope / Sub-Portal -->
                 <tr valign="top">
-                    <th scope="row" style="font-weight: bold;"><?php _e('Website Scope / Sub-Portal', 'rvce-chatbot'); ?></th>
+                    <th scope="row" style="font-weight: bold;"><?php _e('Website Scope / Sub-Portal', 'rvce-chatbot'); ?>
+                    </th>
                     <td>
                         <?php $current_subsite = get_option('rvce_chatbot_subsite', 'auto'); ?>
-                        <select name="rvce_chatbot_subsite" style="width: 100%; max-width: 480px; padding: 6px 10px; border-radius: 6px; font-size: 14px;">
-                            <option value="auto" <?php selected($current_subsite, 'auto'); ?>><?php _e('Auto-Detect from Page URL (Default)', 'rvce-chatbot'); ?></option>
-                            <option value="main" <?php selected($current_subsite, 'main'); ?>><?php _e('RVCE Main Website (rvce.edu.in)', 'rvce-chatbot'); ?></option>
-                            <option value="departments" <?php selected($current_subsite, 'departments'); ?>><?php _e('Departments Portal (/department/*)', 'rvce-chatbot'); ?></option>
-                            <option value="alumni" <?php selected($current_subsite, 'alumni'); ?>><?php _e('Alumni & Library Portal (/alumni/*, /library/*)', 'rvce-chatbot'); ?></option>
+                        <select name="rvce_chatbot_subsite"
+                            style="width: 100%; max-width: 480px; padding: 6px 10px; border-radius: 6px; font-size: 14px;">
+                            <option value="auto" <?php selected($current_subsite, 'auto'); ?>>
+                                <?php _e('Auto-Detect from Page URL (Default)', 'rvce-chatbot'); ?></option>
+                            <option value="main" <?php selected($current_subsite, 'main'); ?>>
+                                <?php _e('RVCE Main Website (rvce.edu.in)', 'rvce-chatbot'); ?></option>
+                            <option value="departments" <?php selected($current_subsite, 'departments'); ?>>
+                                <?php _e('Departments Portal (/department/*)', 'rvce-chatbot'); ?></option>
+                            <option value="alumni" <?php selected($current_subsite, 'alumni'); ?>>
+                                <?php _e('Alumni & Library Portal (/alumni/*, /library/*)', 'rvce-chatbot'); ?></option>
                         </select>
-                        <p class="description"><?php _e('Categorizes analytics in your Central Dashboard so you can filter queries by Main, Departments, or Alumni.', 'rvce-chatbot'); ?></p>
+                        <p class="description">
+                            <?php _e('Categorizes analytics in your Central Dashboard so you can filter queries by Main, Departments, or Alumni.', 'rvce-chatbot'); ?>
+                        </p>
                     </td>
                 </tr>
 
                 <!-- Central Dashboard Server / Node Backend URL -->
                 <tr valign="top">
-                    <th scope="row" style="font-weight: bold;"><?php _e('Central Backend URL (Vercel / Node)', 'rvce-chatbot'); ?></th>
+                    <th scope="row" style="font-weight: bold;">
+                        <?php _e('Central Backend URL (Vercel / Node)', 'rvce-chatbot'); ?></th>
                     <td>
                         <input type="url" name="rvce_chatbot_vercel_url"
                             value="<?php echo esc_url(get_option('rvce_chatbot_vercel_url', 'http://localhost:3001')); ?>"
                             class="regular-text" style="width: 100%; max-width: 480px;"
                             placeholder="http://localhost:3001 or https://your-central-dashboard.vercel.app" />
-                        <p class="description"><?php _e('Central Node.js / MongoDB Dashboard URL (without /api). Telemetry will dual-write here so RVCE appears on the master command center.', 'rvce-chatbot'); ?></p>
+                        <p class="description">
+                            <?php _e('Central Node.js / MongoDB Dashboard URL (without /api). Telemetry will dual-write here so RVCE appears on the master command center.', 'rvce-chatbot'); ?>
+                        </p>
                     </td>
                 </tr>
 
                 <!-- Google Sheets API URL -->
                 <tr valign="top">
-                    <th scope="row" style="font-weight: bold;"><?php _e('Google Sheets Webhook URL', 'rvce-chatbot'); ?></th>
+                    <th scope="row" style="font-weight: bold;"><?php _e('Google Sheets Webhook URL', 'rvce-chatbot'); ?>
+                    </th>
                     <td>
                         <input type="url" name="rvce_chatbot_sheets_url"
-                            value="<?php echo esc_url(get_option('rvce_chatbot_sheets_url', '')); ?>"
-                            class="regular-text" style="width: 100%; max-width: 480px;"
+                            value="<?php echo esc_url(get_option('rvce_chatbot_sheets_url', '')); ?>" class="regular-text"
+                            style="width: 100%; max-width: 480px;"
                             placeholder="https://script.google.com/macros/s/.../exec" />
-                        <p class="description"><?php _e('Optional Google Apps Script webhook to automatically forward student admission leads.', 'rvce-chatbot'); ?></p>
+                        <p class="description">
+                            <?php _e('Optional Google Apps Script webhook to automatically forward student admission leads.', 'rvce-chatbot'); ?>
+                        </p>
                     </td>
                 </tr>
 
@@ -450,18 +615,22 @@ function rvce_chatbot_settings_page() {
                         <input type="url" name="rvce_chatbot_logo_url"
                             value="<?php echo esc_url(get_option('rvce_chatbot_logo_url', $default_logo)); ?>"
                             class="regular-text" style="width: 100%; max-width: 480px;" />
-                        <p class="description"><?php _e('Image URL of the RVCE logo for the header and bot messages.', 'rvce-chatbot'); ?></p>
+                        <p class="description">
+                            <?php _e('Image URL of the RVCE logo for the header and bot messages.', 'rvce-chatbot'); ?></p>
                     </td>
                 </tr>
 
                 <!-- Receiver Email -->
                 <tr valign="top">
-                    <th scope="row" style="font-weight: bold;"><?php _e('Admissions Notification Email', 'rvce-chatbot'); ?></th>
+                    <th scope="row" style="font-weight: bold;"><?php _e('Admissions Notification Email', 'rvce-chatbot'); ?>
+                    </th>
                     <td>
                         <input type="email" name="rvce_chatbot_receiver_email"
                             value="<?php echo esc_attr(get_option('rvce_chatbot_receiver_email', 'admissions@rvce.edu.in')); ?>"
                             class="regular-text" style="width: 100%; max-width: 480px;" required />
-                        <p class="description"><?php _e('Email address where new inquiry lead alerts will be delivered.', 'rvce-chatbot'); ?></p>
+                        <p class="description">
+                            <?php _e('Email address where new inquiry lead alerts will be delivered.', 'rvce-chatbot'); ?>
+                        </p>
                     </td>
                 </tr>
 
@@ -472,7 +641,8 @@ function rvce_chatbot_settings_page() {
                         <input type="email" name="rvce_chatbot_sender_email"
                             value="<?php echo esc_attr(get_option('rvce_chatbot_sender_email', 'chatbot@rvce.edu.in')); ?>"
                             class="regular-text" style="width: 100%; max-width: 480px;" required />
-                        <p class="description"><?php _e('Email address displayed as the sender in notifications.', 'rvce-chatbot'); ?></p>
+                        <p class="description">
+                            <?php _e('Email address displayed as the sender in notifications.', 'rvce-chatbot'); ?></p>
                     </td>
                 </tr>
             </table>
@@ -487,7 +657,8 @@ function rvce_chatbot_settings_page() {
  * Check if Elementor or any page builder/editor is active
  * Prevents chatbot scripts, styles, and floating UI from breaking visual builders
  */
-function rvce_chatbot_is_builder_active() {
+function rvce_chatbot_is_builder_active()
+{
     // 1. Elementor Editor or Preview Mode
     if (isset($_GET['elementor-preview']) || isset($_GET['elementor_library']) || (isset($_GET['action']) && $_GET['action'] === 'elementor')) {
         return true;
@@ -517,7 +688,8 @@ function rvce_chatbot_is_builder_active() {
 /**
  * Preconnect font domains for faster, non-blocking typography rendering
  */
-function rvce_chatbot_preconnect_fonts() {
+function rvce_chatbot_preconnect_fonts()
+{
     if (rvce_chatbot_is_builder_active() || get_option('rvce_chatbot_enabled', '1') !== '1') {
         return;
     }
@@ -529,7 +701,8 @@ add_action('wp_head', 'rvce_chatbot_preconnect_fonts', 2);
 /**
  * Defer non-critical chatbot scripts to ensure zero impact on page load speed
  */
-function rvce_chatbot_defer_scripts($tag, $handle, $src) {
+function rvce_chatbot_defer_scripts($tag, $handle, $src)
+{
     if (in_array($handle, array('rvce-chatbot-telemetry', 'rvce-chatbot-script'), true)) {
         if (false === strpos($tag, 'defer')) {
             $tag = str_replace('<script ', '<script defer ', $tag);
@@ -542,7 +715,8 @@ add_filter('script_loader_tag', 'rvce_chatbot_defer_scripts', 10, 3);
 /**
  * Enqueue Styles and Scripts for Frontend
  */
-function rvce_chatbot_enqueue_assets() {
+function rvce_chatbot_enqueue_assets()
+{
     if (rvce_chatbot_is_builder_active()) {
         return;
     }
@@ -593,16 +767,16 @@ function rvce_chatbot_enqueue_assets() {
         'rvce-chatbot-telemetry',
         'rvceChatbotSettings',
         array(
-            'logoUrl'         => esc_url($logo_url),
-            'title'           => esc_html(get_option('rvce_chatbot_title', 'RVCE Assistant')),
-            'statusText'      => esc_html(get_option('rvce_chatbot_status_text', 'Online — Ready to help')),
-            'welcomeText'     => esc_html(get_option('rvce_chatbot_welcome_text', 'Hi there! Have questions about RVCE admissions, placements, or courses? Chat with us!')),
+            'logoUrl' => esc_url($logo_url),
+            'title' => esc_html(get_option('rvce_chatbot_title', 'RVCE Assistant')),
+            'statusText' => esc_html(get_option('rvce_chatbot_status_text', 'Online — Ready to help')),
+            'welcomeText' => esc_html(get_option('rvce_chatbot_welcome_text', 'Hi there! Have questions about RVCE admissions, placements, or courses? Chat with us!')),
             'googleSheetsUrl' => esc_url_raw(get_option('rvce_chatbot_sheets_url', '')),
-            'restUrl'         => esc_url_raw(rest_url('rvce/v1')),
-            'vercelUrl'       => esc_url_raw(rvce_chatbot_get_clean_vercel_url() ?: get_option('rvce_chatbot_vercel_url', 'http://localhost:3001')),
-            'subsite'         => sanitize_text_field(get_option('rvce_chatbot_subsite', 'auto')),
-            'ajaxUrl'         => admin_url('admin-ajax.php'),
-            'nonce'           => wp_create_nonce('rvce_chatbot_nonce')
+            'restUrl' => esc_url_raw(rest_url('rvce/v1')),
+            'vercelUrl' => esc_url_raw(rvce_chatbot_get_clean_vercel_url() ?: get_option('rvce_chatbot_vercel_url', 'http://localhost:3001')),
+            'subsite' => sanitize_text_field(get_option('rvce_chatbot_subsite', 'auto')),
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('rvce_chatbot_nonce')
         )
     );
 
@@ -620,7 +794,8 @@ add_action('wp_enqueue_scripts', 'rvce_chatbot_enqueue_assets');
 /**
  * Render Chatbot Widget in Footer
  */
-function rvce_chatbot_render_footer_html() {
+function rvce_chatbot_render_footer_html()
+{
     if (rvce_chatbot_is_builder_active()) {
         return;
     }
@@ -636,29 +811,37 @@ function rvce_chatbot_render_footer_html() {
     $welcome = esc_html(get_option('rvce_chatbot_welcome_text', 'Hi there! Have questions about RVCE admissions, placements, or courses? Chat with us!'));
     ?>
     <script>
-    window.rvceChatbotSettings = window.rvceChatbotSettings || {};
-    window.rvceChatbotSettings.logoUrl = <?php echo json_encode($logo_url); ?>;
-    window.rvceChatbotSettings.title = <?php echo json_encode($title); ?>;
-    window.rvceChatbotSettings.statusText = <?php echo json_encode($status_text); ?>;
-    window.rvceChatbotSettings.restUrl = <?php echo json_encode(rest_url('rvce/v1')); ?>;
-    window.rvceChatbotSettings.vercelUrl = <?php echo json_encode(rvce_chatbot_get_clean_vercel_url() ?: get_option('rvce_chatbot_vercel_url', 'http://localhost:3001')); ?>;
-    window.rvceChatbotSettings.subsite = <?php echo json_encode(get_option('rvce_chatbot_subsite', 'auto')); ?>;
+        window.rvceChatbotSettings = window.rvceChatbotSettings || {};
+        window.rvceChatbotSettings.logoUrl = <?php echo json_encode($logo_url); ?>;
+        window.rvceChatbotSettings.title = <?php echo json_encode($title); ?>;
+        window.rvceChatbotSettings.statusText = <?php echo json_encode($status_text); ?>;
+        window.rvceChatbotSettings.restUrl = <?php echo json_encode(rest_url('rvce/v1')); ?>;
+        window.rvceChatbotSettings.vercelUrl = <?php echo json_encode(rvce_chatbot_get_clean_vercel_url() ?: get_option('rvce_chatbot_vercel_url', 'http://localhost:3001')); ?>;
+        window.rvceChatbotSettings.subsite = <?php echo json_encode(get_option('rvce_chatbot_subsite', 'auto')); ?>;
     </script>
     <!-- RVCE Chatbot Root Container -->
     <div id="rvce-chatbot-root" class="rvce-chatbot-widget">
         <div class="app-container">
             <!-- Floating Chat Widget Button -->
-            <button class="chat-fab" id="chatFab" title="Chat with RVCE Assistant" aria-label="Open RVCE chatbot" role="button" aria-expanded="false" style="padding:0 !important; line-height:1 !important; box-sizing:border-box !important; aspect-ratio:1/1 !important;">
-                <span class="fab-icon open-icon" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; padding:0; margin:0; line-height:1;">
-                    <img src="<?php echo esc_url($logo_url); ?>" alt="RVCE Logo" style="width:36px !important; height:36px !important; min-width:36px !important; min-height:36px !important; max-width:36px !important; max-height:36px !important; aspect-ratio:1/1 !important; object-fit:contain !important; border-radius:50% !important; background-color:#ffffff !important; padding:2px !important; box-sizing:border-box !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; display:block !important; flex-shrink:0 !important; margin:0 auto !important;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';">
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            <button class="chat-fab" id="chatFab" title="Chat with RVCE Assistant" aria-label="Open RVCE chatbot"
+                role="button" aria-expanded="false"
+                style="padding:0 !important; line-height:1 !important; box-sizing:border-box !important; aspect-ratio:1/1 !important;">
+                <span class="fab-icon open-icon"
+                    style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; padding:0; margin:0; line-height:1;">
+                    <img src="<?php echo esc_url($logo_url); ?>" alt="RVCE Logo"
+                        style="width:36px !important; height:36px !important; min-width:36px !important; min-height:36px !important; max-width:36px !important; max-height:36px !important; aspect-ratio:1/1 !important; object-fit:contain !important; border-radius:50% !important; background-color:#ffffff !important; padding:2px !important; box-sizing:border-box !important; box-shadow:0 2px 8px rgba(0,0,0,0.2) !important; display:block !important; flex-shrink:0 !important; margin:0 auto !important;"
+                        onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                     </svg>
                 </span>
-                <span class="fab-icon close-icon" style="display:none; width:100%; height:100%; align-items:center; justify-content:center; line-height:1;">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
+                <span class="fab-icon close-icon"
+                    style="display:none; width:100%; height:100%; align-items:center; justify-content:center; line-height:1;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
                     </svg>
                 </span>
                 <span class="fab-badge" id="fabBadge">1</span>
@@ -670,9 +853,13 @@ function rvce_chatbot_render_footer_html() {
                 <div class="chat-header">
                     <div class="header-left">
                         <div class="avatar-container">
-                            <div class="avatar" style="overflow:hidden; display:flex; align-items:center; justify-content:center; background:#ffffff; border-radius:12px; padding:2px; box-shadow:0 2px 8px rgba(0,0,0,0.12);">
-                                <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($title); ?>" style="width:100%; height:100%; object-fit:contain; border-radius:10px; background-color:#ffffff; padding:2px; display:block;" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';">
-                                <span style="display:none; font-weight:800; font-size:14px; color:#E31E24; font-family:'Inter',sans-serif;">RV</span>
+                            <div class="avatar"
+                                style="overflow:hidden; display:flex; align-items:center; justify-content:center; background:#ffffff; border-radius:12px; padding:2px; box-shadow:0 2px 8px rgba(0,0,0,0.12);">
+                                <img src="<?php echo esc_url($logo_url); ?>" alt="<?php echo esc_attr($title); ?>"
+                                    style="width:100%; height:100%; object-fit:contain; border-radius:10px; background-color:#ffffff; padding:2px; display:block;"
+                                    onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';">
+                                <span
+                                    style="display:none; font-weight:800; font-size:14px; color:#E31E24; font-family:'Inter',sans-serif;">RV</span>
                             </div>
                             <div class="avatar-ring"></div>
                         </div>
@@ -685,11 +872,27 @@ function rvce_chatbot_render_footer_html() {
                         </div>
                     </div>
                     <div class="header-actions">
-                        <button class="clear-btn" id="clearBtn" title="Clear Chat" aria-label="Clear chat history" style="width:30px !important; height:30px !important; min-width:30px !important; min-height:30px !important; border-radius:8px !important; border:1px solid rgba(255,255,255,0.4) !important; background:rgba(255,255,255,0.2) !important; color:#ffffff !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; line-height:1 !important;">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px !important; height:16px !important; min-width:16px !important; min-height:16px !important; stroke:#ffffff !important; fill:none !important; display:block !important;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                        <button class="clear-btn" id="clearBtn" title="Clear Chat" aria-label="Clear chat history"
+                            style="width:30px !important; height:30px !important; min-width:30px !important; min-height:30px !important; border-radius:8px !important; border:1px solid rgba(255,255,255,0.4) !important; background:rgba(255,255,255,0.2) !important; color:#ffffff !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; line-height:1 !important;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round"
+                                style="width:16px !important; height:16px !important; min-width:16px !important; min-height:16px !important; stroke:#ffffff !important; fill:none !important; display:block !important;">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2">
+                                </path>
+                                <line x1="10" y1="11" x2="10" y2="17"></line>
+                                <line x1="14" y1="11" x2="14" y2="17"></line>
+                            </svg>
                         </button>
-                        <button class="close-header-btn" id="headerCloseBtn" title="Close Chat" aria-label="Close chatbot window" style="width:30px !important; height:30px !important; min-width:30px !important; min-height:30px !important; border-radius:8px !important; border:1px solid rgba(255,255,255,0.4) !important; background:rgba(255,255,255,0.2) !important; color:#ffffff !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; line-height:1 !important;">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px !important; height:18px !important; min-width:18px !important; min-height:18px !important; stroke:#ffffff !important; fill:none !important; display:block !important;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                        <button class="close-header-btn" id="headerCloseBtn" title="Close Chat"
+                            aria-label="Close chatbot window"
+                            style="width:30px !important; height:30px !important; min-width:30px !important; min-height:30px !important; border-radius:8px !important; border:1px solid rgba(255,255,255,0.4) !important; background:rgba(255,255,255,0.2) !important; color:#ffffff !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; line-height:1 !important;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5"
+                                stroke-linecap="round" stroke-linejoin="round"
+                                style="width:18px !important; height:18px !important; min-width:18px !important; min-height:18px !important; stroke:#ffffff !important; fill:none !important; display:block !important;">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
                         </button>
                     </div>
                 </div>
@@ -701,7 +904,9 @@ function rvce_chatbot_render_footer_html() {
                 <div class="typing-indicator" id="typingIndicator">
                     <div class="typing-bubble">
                         <div class="typing-av">
-                            <img src="<?php echo esc_url($logo_url); ?>" alt="RVCE" style="width:100%; height:100%; object-fit:contain; border-radius:4px; display:block;" onerror="this.style.display='none';">
+                            <img src="<?php echo esc_url($logo_url); ?>" alt="RVCE"
+                                style="width:100%; height:100%; object-fit:contain; border-radius:4px; display:block;"
+                                onerror="this.style.display='none';">
                         </div>
                         <div class="typing-dots"><span></span><span></span><span></span></div>
                     </div>
@@ -717,26 +922,39 @@ function rvce_chatbot_render_footer_html() {
                 <!-- Input Area -->
                 <div class="chat-input-area" style="position: relative;">
                     <div id="typeahead" class="typeahead-container hidden"></div>
-                    <div class="input-wrapper" style="display:flex !important; align-items:center !important; gap:4px !important;">
-                        <button id="emojiBtn" class="emoji-btn" title="Main Menu" aria-label="Open main menu" style="width:32px !important; height:32px !important; min-width:32px !important; min-height:32px !important; border:none !important; background:transparent !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; color:#4b5563 !important;">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px !important; height:18px !important; min-width:18px !important; min-height:18px !important; stroke:#4b5563 !important; fill:none !important; display:block !important;">
-                                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                                <polyline points="9 22 9 12 15 12 15 22"/>
+                    <div class="input-wrapper"
+                        style="display:flex !important; align-items:center !important; gap:4px !important;">
+                        <button id="emojiBtn" class="emoji-btn" title="Main Menu" aria-label="Open main menu"
+                            style="width:32px !important; height:32px !important; min-width:32px !important; min-height:32px !important; border:none !important; background:transparent !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; color:#4b5563 !important;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round"
+                                style="width:18px !important; height:18px !important; min-width:18px !important; min-height:18px !important; stroke:#4b5563 !important; fill:none !important; display:block !important;">
+                                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                                <polyline points="9 22 9 12 15 12 15 22" />
                             </svg>
                         </button>
-                        <button id="micBtn" class="mic-btn" title="Voice Search" aria-label="Voice search - speak your question" style="width:32px !important; height:32px !important; min-width:32px !important; min-height:32px !important; border:none !important; background:transparent !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; color:#4b5563 !important;">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px !important; height:18px !important; min-width:18px !important; min-height:18px !important; stroke:#4b5563 !important; fill:none !important; display:block !important;">
-                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                                <line x1="12" y1="19" x2="12" y2="23"/>
-                                <line x1="8" y1="23" x2="16" y2="23"/>
+                        <button id="micBtn" class="mic-btn" title="Voice Search"
+                            aria-label="Voice search - speak your question"
+                            style="width:32px !important; height:32px !important; min-width:32px !important; min-height:32px !important; border:none !important; background:transparent !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; color:#4b5563 !important;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4b5563" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round"
+                                style="width:18px !important; height:18px !important; min-width:18px !important; min-height:18px !important; stroke:#4b5563 !important; fill:none !important; display:block !important;">
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                <line x1="12" y1="19" x2="12" y2="23" />
+                                <line x1="8" y1="23" x2="16" y2="23" />
                             </svg>
                         </button>
-                        <input type="text" id="userInput" placeholder="Ask anything about RVCE admissions, faculty, cutoffs..." autocomplete="off" aria-label="Type your question about RVCE" maxlength="250">
-                        <button id="sendBtn" class="send-btn" title="Send" aria-label="Send message" style="width:34px !important; height:34px !important; min-width:34px !important; min-height:34px !important; border-radius:10px !important; border:none !important; background:linear-gradient(135deg, #E31E24, #C2191E) !important; color:#ffffff !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; box-shadow:0 2px 8px rgba(227,30,36,0.3) !important;">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px !important; height:18px !important; min-width:18px !important; min-height:18px !important; stroke:#ffffff !important; fill:none !important; display:block !important; margin-left:2px !important;">
-                                <line x1="22" y1="2" x2="11" y2="13"/>
-                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        <input type="text" id="userInput"
+                            placeholder="Ask anything about RVCE admissions, faculty, cutoffs..." autocomplete="off"
+                            aria-label="Type your question about RVCE" maxlength="250">
+                        <button id="sendBtn" class="send-btn" title="Send" aria-label="Send message"
+                            style="width:34px !important; height:34px !important; min-width:34px !important; min-height:34px !important; border-radius:10px !important; border:none !important; background:linear-gradient(135deg, #E31E24, #C2191E) !important; color:#ffffff !important; display:flex !important; align-items:center !important; justify-content:center !important; cursor:pointer !important; padding:0 !important; box-shadow:0 2px 8px rgba(227,30,36,0.3) !important;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5"
+                                stroke-linecap="round" stroke-linejoin="round"
+                                style="width:18px !important; height:18px !important; min-width:18px !important; min-height:18px !important; stroke:#ffffff !important; fill:none !important; display:block !important; margin-left:2px !important;">
+                                <line x1="22" y1="2" x2="11" y2="13" />
+                                <polygon points="22 2 15 22 11 13 2 9 22 2" />
                             </svg>
                         </button>
                     </div>
@@ -749,7 +967,8 @@ function rvce_chatbot_render_footer_html() {
 add_action('wp_footer', 'rvce_chatbot_render_footer_html', 999);
 
 // Shortcode support
-function rvce_chatbot_shortcode() {
+function rvce_chatbot_shortcode()
+{
     ob_start();
     rvce_chatbot_render_footer_html();
     return ob_get_clean();
@@ -759,7 +978,8 @@ add_shortcode('rvce_chatbot', 'rvce_chatbot_shortcode');
 /**
  * Database Activation Hook & Auto-Provisioning
  */
-function rvce_chatbot_activate() {
+function rvce_chatbot_activate()
+{
     global $wpdb;
     $charset_collate = $wpdb->get_charset_collate();
 
@@ -806,7 +1026,8 @@ function rvce_chatbot_activate() {
 }
 register_activation_hook(__FILE__, 'rvce_chatbot_activate');
 
-function rvce_chatbot_ensure_tables_exist() {
+function rvce_chatbot_ensure_tables_exist()
+{
     // Avoid running expensive SHOW TABLES on every single request
     if (get_transient('rvce_tables_exist_checked')) {
         return;
@@ -832,8 +1053,8 @@ add_action('rest_api_init', function () {
         'permission_callback' => '__return_true'
     ));
 
-    // GET /overview-data, /interactions-data, /sessions-data, /analytics-data
-    $dashboard_routes = array('/overview-data', '/interactions-data', '/sessions-data', '/analytics-data');
+    // GET /overview-data, /interactions-data, /analytics-data
+    $dashboard_routes = array('/overview-data', '/interactions-data', '/analytics-data');
     foreach ($dashboard_routes as $route) {
         register_rest_route($namespace, $route, array(
             'methods' => 'GET',
@@ -841,6 +1062,13 @@ add_action('rest_api_init', function () {
             'permission_callback' => '__return_true'
         ));
     }
+
+    // GET /sessions-data
+    register_rest_route($namespace, '/sessions-data', array(
+        'methods' => 'GET',
+        'callback' => 'rvce_chatbot_get_sessions',
+        'permission_callback' => '__return_true'
+    ));
 
     // GET /leads-data
     register_rest_route($namespace, '/leads-data', array(
@@ -850,7 +1078,8 @@ add_action('rest_api_init', function () {
     ));
 });
 
-function rvce_chatbot_post_logs($request) {
+function rvce_chatbot_post_logs($request)
+{
     rvce_chatbot_ensure_tables_exist();
     global $wpdb;
     $params = $request->get_params();
@@ -897,8 +1126,10 @@ function rvce_chatbot_post_logs($request) {
 
         if ($is_lead) {
             $lead_payload = isset($data['leadData']) ? $data['leadData'] : $data;
-            if (!isset($lead_payload['email']) && $extracted_email) $lead_payload['email'] = $extracted_email;
-            if (!isset($lead_payload['phone']) && $extracted_phone) $lead_payload['phone'] = $extracted_phone;
+            if (!isset($lead_payload['email']) && $extracted_email)
+                $lead_payload['email'] = $extracted_email;
+            if (!isset($lead_payload['phone']) && $extracted_phone)
+                $lead_payload['phone'] = $extracted_phone;
             if (!isset($lead_payload['name'])) {
                 if (preg_match('/(?:Name|Full Name)[\:\s]+([a-zA-Z\s]+)(?:Phone|Email|$)/i', $text_to_scan, $n_matches)) {
                     $lead_payload['name'] = trim($n_matches[1]);
@@ -906,7 +1137,8 @@ function rvce_chatbot_post_logs($request) {
                     $lead_payload['name'] = 'RVCE Visitor';
                 }
             }
-            if (!isset($lead_payload['formType'])) $lead_payload['formType'] = 'Admissions Inquiry';
+            if (!isset($lead_payload['formType']))
+                $lead_payload['formType'] = 'Admissions Inquiry';
 
             $wpdb->insert($table_leads, array(
                 'session_id' => $session_id,
@@ -936,11 +1168,16 @@ function rvce_chatbot_post_logs($request) {
 
         $queryText = isset($data['elementText']) ? sanitize_text_field($data['elementText']) : (isset($data['query']) ? sanitize_text_field($data['query']) : '');
         if (!$queryText) {
-            if ($event_type === 'heartbeat') $queryText = 'User active on page (Dwell: ' . (isset($data['dwellTimeSeconds']) ? intval($data['dwellTimeSeconds']) : 0) . 's)';
-            else if ($event_type === 'page_load') $queryText = 'Opened RVCE Chatbot';
-            else if ($event_type === 'scroll') $queryText = 'Scrolled page';
-            else if ($event_type === 'copy') $queryText = 'Copied text to clipboard';
-            else $queryText = $event_type;
+            if ($event_type === 'heartbeat')
+                $queryText = 'User active on page (Dwell: ' . (isset($data['dwellTimeSeconds']) ? intval($data['dwellTimeSeconds']) : 0) . 's)';
+            else if ($event_type === 'page_load')
+                $queryText = 'Opened RVCE Chatbot';
+            else if ($event_type === 'scroll')
+                $queryText = 'Scrolled page';
+            else if ($event_type === 'copy')
+                $queryText = 'Copied text to clipboard';
+            else
+                $queryText = $event_type;
         }
 
         $bot_opened_page = ($event_type === 'bot_open' || $event_type === 'chat_open')
@@ -963,7 +1200,8 @@ function rvce_chatbot_post_logs($request) {
     return rest_ensure_response(array('success' => true, 'saved' => $inserted_count));
 }
 
-function rvce_chatbot_get_interactions($request) {
+function rvce_chatbot_get_interactions($request)
+{
     rvce_chatbot_ensure_tables_exist();
     global $wpdb;
     $table_name = $wpdb->prefix . 'rvce_interactions';
@@ -1007,7 +1245,28 @@ function rvce_chatbot_get_interactions($request) {
     return rest_ensure_response($formatted);
 }
 
-function rvce_chatbot_get_leads($request) {
+function rvce_chatbot_get_sessions($request)
+{
+    rvce_chatbot_ensure_tables_exist();
+    global $wpdb;
+    $table_interactions = $wpdb->prefix . 'rvce_interactions';
+    $results = $wpdb->get_results("SELECT session_id, MIN(created_at) as start_time, MAX(created_at) as last_active, COUNT(*) as interaction_count FROM $table_interactions GROUP BY session_id ORDER BY last_active DESC LIMIT 300", ARRAY_A);
+    $sessions = array();
+    if (!empty($results)) {
+        foreach ($results as $row) {
+            $sessions[] = array(
+                'sessionId' => $row['session_id'],
+                'startTime' => !empty($row['start_time']) ? gmdate('Y-m-d\TH:i:s\Z', strtotime($row['start_time'])) : gmdate('Y-m-d\TH:i:s\Z'),
+                'lastActive' => !empty($row['last_active']) ? gmdate('Y-m-d\TH:i:s\Z', strtotime($row['last_active'])) : gmdate('Y-m-d\TH:i:s\Z'),
+                'interactionCount' => intval($row['interaction_count'])
+            );
+        }
+    }
+    return rest_ensure_response($sessions);
+}
+
+function rvce_chatbot_get_leads($request)
+{
     rvce_chatbot_ensure_tables_exist();
     global $wpdb;
     $table_name = $wpdb->prefix . 'rvce_leads';
@@ -1031,7 +1290,8 @@ function rvce_chatbot_get_leads($request) {
 /**
  * AJAX Handler: Send Lead Notification Email
  */
-function rvce_chatbot_send_lead_email() {
+function rvce_chatbot_send_lead_email()
+{
     if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'rvce_chatbot_nonce')) {
         wp_send_json_error(array('message' => 'Security check failed.'), 403);
     }
@@ -1049,9 +1309,12 @@ function rvce_chatbot_send_lead_email() {
     $email_html .= '<p><strong>Lead Type:</strong> <span style="color: #334155;">' . esc_html($form_type) . '</span></p>';
     $email_html .= '<p><strong>Name:</strong> <span style="color: #334155;">' . esc_html($name) . '</span></p>';
     $email_html .= '<p><strong>Phone:</strong> <span style="color: #334155;">' . esc_html($phone) . '</span></p>';
-    if ($email) $email_html .= '<p><strong>Email:</strong> <span style="color: #334155;">' . esc_html($email) . '</span></p>';
-    if ($department) $email_html .= '<p><strong>Interested Branch:</strong> <span style="color: #334155;">' . esc_html($department) . '</span></p>';
-    if ($quota) $email_html .= '<p><strong>Admission Quota:</strong> <span style="color: #334155;">' . esc_html($quota) . '</span></p>';
+    if ($email)
+        $email_html .= '<p><strong>Email:</strong> <span style="color: #334155;">' . esc_html($email) . '</span></p>';
+    if ($department)
+        $email_html .= '<p><strong>Interested Branch:</strong> <span style="color: #334155;">' . esc_html($department) . '</span></p>';
+    if ($quota)
+        $email_html .= '<p><strong>Admission Quota:</strong> <span style="color: #334155;">' . esc_html($quota) . '</span></p>';
     $email_html .= '</div>';
     $email_html .= '<p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 30px;">Sent automatically by the official RVCE AI Chatbot System.</p>';
     $email_html .= '</div>';
@@ -1076,7 +1339,8 @@ add_action('wp_ajax_rvce_send_lead', 'rvce_chatbot_send_lead_email');
 add_action('wp_ajax_nopriv_rvce_send_lead', 'rvce_chatbot_send_lead_email');
 
 // Legacy chat logging endpoint for backward compatibility
-function rvce_legacy_log_chat_query() {
+function rvce_legacy_log_chat_query()
+{
     global $wpdb;
     $table_name = $wpdb->prefix . 'rvce_chat_logs';
 

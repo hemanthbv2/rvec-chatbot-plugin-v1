@@ -727,16 +727,7 @@
     </div>
 
     <script>
-        const API_BASE = (function() {
-            if (window.location.protocol === 'file:') return 'http://localhost:3001';
-            // If already on an HTTPS deployment (e.g. Vercel or live server), always use relative API path to prevent mixed content
-            if (window.location.protocol === 'https:') return '';
-            // If on localhost but different port (e.g. local WordPress on port 8000), target port 3001
-            if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port && window.location.port !== '3001') {
-                return 'http://localhost:3001';
-            }
-            return '';
-        })();
+        const API_BASE = (window.location.protocol === 'file:') ? 'http://localhost:3001' : '';
 
         function apiUrl(path) {
             if (!path) return '';
@@ -795,7 +786,8 @@
         async function fetchDailyReport() {
             try {
                 const urlParams = new URLSearchParams(window.location.search);
-                const targetSessionId = urlParams.get('session') || urlParams.get('sessionId') || urlParams.get('id');
+                const rawSession = urlParams.get('session') || urlParams.get('sessionId') || urlParams.get('id');
+                const targetSessionId = rawSession ? decodeURIComponent(rawSession).replace(/^(?:Replay:\s*)+/i, '').trim() : null;
                 const targetDate = urlParams.get('date');
                 const targetMonth = urlParams.get('month') || (targetDate && targetDate.length === 7 ? targetDate : null);
                 const autoPrint = urlParams.get('autoprint') === 'true';
